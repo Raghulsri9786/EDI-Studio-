@@ -97,6 +97,7 @@ export enum AppMode {
   EDITOR = 'EDITOR',
   COMPARE = 'COMPARE',
   MAPPER = 'MAPPER',
+  AI_STUDIO = 'AI_STUDIO',
 }
 
 export type PanelTab = 'chat' | 'validate' | 'tools' | 'json';

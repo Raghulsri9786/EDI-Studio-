@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useRef, useLayoutEffect } from 'react';
-import { Activity, GitCompare, PenTool, Layout, FileCode, Search, Settings, X, MessageSquare, Bot, Mic, ChevronLeft, ChevronRight, Database, Cloud, UserCircle, LogOut } from 'lucide-react';
+import { Activity, GitCompare, Layout, FileCode, Search, Settings, X, MessageSquare, Mic, Database, Cloud, UserCircle, LogOut, FilePlus, FolderOpen, Save, FileJson, BrainCircuit, BookOpen } from 'lucide-react';
 import Editor, { EditorHandle, EditorState } from './components/Editor';
 import EditorToolbar from './components/EditorToolbar';
 import AnalysisPanel from './components/AnalysisPanel';
@@ -15,6 +15,8 @@ import InteractiveBackground from './components/InteractiveBackground';
 import AuthModal from './components/AuthModal';
 import CloudFileManager from './components/CloudFileManager';
 import HumanReadablePanel from './components/HumanReadablePanel';
+import MenuBar from './components/MenuBar';
+import CommandPalette, { CommandItem } from './components/CommandPalette';
 import { AppState, AppMode, EdiFile, AppSettings, PanelTab } from './types';
 import { animatePageEntrance, animatePanelEnter, animatePanelExit } from './utils/gsapAnimations';
 import { storageService } from './services/storageService';
@@ -46,11 +48,9 @@ function App() {
 
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
 
-  const [isSearchOpen, setIsSearchOpen] = useState(false);
-  const [searchTerm, setSearchTerm] = useState('');
-
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
+  const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
   
   const [settings, setSettings] = useState<AppSettings>({
     fontSize: 'medium',
@@ -97,6 +97,42 @@ function App() {
     ? !!settings.deepSeekApiKey 
     : !!settings.geminiApiKey;
 
+  // Global Key Down Listener for Command Palette & Shortcuts
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Command Palette (Ctrl+Shift+P or F1)
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'p') {
+        e.preventDefault();
+        setIsCommandPaletteOpen(true);
+      }
+      if (e.key === 'F1') {
+        e.preventDefault();
+        setIsCommandPaletteOpen(true);
+      }
+
+      // Sidebar Toggle (Ctrl+B)
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'b') {
+        e.preventDefault();
+        setIsSidebarOpen(prev => !prev);
+      }
+
+      // New File (Ctrl+N)
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'n' && !e.shiftKey) {
+        e.preventDefault();
+        handleNewFile();
+      }
+
+      // Save (Ctrl+S)
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+        e.preventDefault();
+        handleDownloadFile(); // Or save logic
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
+
   // Initialize Settings & Data
   useEffect(() => {
     const initApp = async () => {
@@ -132,7 +168,6 @@ function App() {
     if (user) {
       cloudService.getSettings().then(cloudSettings => {
         if (cloudSettings) {
-          // Merge local keys with cloud settings (cloud doesn't store keys)
           setSettings(prev => ({ ...prev, ...cloudSettings, geminiApiKey: prev.geminiApiKey, deepSeekApiKey: prev.deepSeekApiKey }));
         }
       });
@@ -143,7 +178,6 @@ function App() {
   useEffect(() => {
     localStorage.setItem('edi_settings', JSON.stringify(settings));
     if (user) {
-      // Debounce cloud settings save
       const timer = setTimeout(() => cloudService.saveSettings(settings), 1000);
       return () => clearTimeout(timer);
     }
@@ -161,7 +195,6 @@ function App() {
     }
   }, [isRightPanelOpen]);
 
-  // Handle closing with animation
   const handleCloseRightPanel = () => {
     if (rightPanelRef.current) {
       animatePanelExit(rightPanelRef.current, () => setIsRightPanelOpen(false));
@@ -188,7 +221,6 @@ function App() {
         const reader = new FileReader();
         reader.onload = (e) => {
           const content = e.target?.result as string;
-          // Use crypto.randomUUID for better uniqueness in loops/batches, fallback to timestamp
           const id = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : Date.now().toString() + Math.random().toString(36).substr(2, 9);
           
           resolve({
@@ -204,9 +236,6 @@ function App() {
 
     try {
       const loadedFiles = await Promise.all(readers);
-      
-      // OPTIMIZATION: Use saveAllFiles for a single DB transaction instead of looping saveFile
-      // This is critical for batch uploads of 20+ files to prevent DB lock/performance issues
       await storageService.saveAllFiles(loadedFiles);
 
       setFiles(prev => {
@@ -245,7 +274,6 @@ function App() {
       lastModified: new Date(),
     }));
     
-    // Batch save for split result as well
     storageService.saveAllFiles(newFiles);
     
     setFiles(prev => [...prev, ...newFiles]);
@@ -291,14 +319,13 @@ function App() {
     setFiles(prev => prev.map(f => {
       if (f.id === activeFileId) {
         const updated = { ...f, content: newContent, lastModified: new Date() };
-        storageService.saveFile(updated); // Persist update local
+        storageService.saveFile(updated); 
         
-        // Auto-save to Cloud if connected
         if (user && f.cloudId) {
            if (autoSaveTimeoutRef.current) clearTimeout(autoSaveTimeoutRef.current);
            autoSaveTimeoutRef.current = setTimeout(() => {
               cloudService.saveFile(updated).catch(console.error);
-           }, 2000); // 2s debounce
+           }, 2000); 
         }
         
         return updated;
@@ -331,7 +358,6 @@ function App() {
   };
 
   const handleLoadCloudFile = (cloudFile: EdiFile) => {
-    // Check if already loaded
     const existing = files.find(f => f.cloudId === cloudFile.cloudId);
     if (existing) {
       setActiveFileId(existing.id);
@@ -346,7 +372,77 @@ function App() {
     setFiles(prev => prev.map(f => f.id === localId ? { ...f, cloudId, isSynced: true } : f));
   };
 
+  // Command Execution Handler
+  const handleCommand = (id: string) => {
+    switch (id) {
+      case 'new_file': handleNewFile(); break;
+      case 'open_file': (document.querySelector('input[type="file"]') as HTMLInputElement)?.click(); break;
+      case 'save_file': handleDownloadFile(); break;
+      case 'export_json': editorRef.current?.download('json'); break;
+      case 'export_xml': editorRef.current?.download('xml'); break;
+      case 'close_file': if(activeFileId) handleDeleteFile(activeFileId); break;
+      
+      case 'undo': editorRef.current?.undo(); break;
+      case 'redo': editorRef.current?.redo(); break;
+      case 'copy': editorRef.current?.copy(); break;
+      case 'find': editorRef.current?.toggleFind(); break;
+      case 'warp': editorRef.current?.warp(); break;
+      case 'unwarp': editorRef.current?.unwarp(); break;
+
+      case 'toggle_sidebar': setIsSidebarOpen(!isSidebarOpen); break;
+      case 'toggle_chat': toggleRightPanel('chat'); break;
+      case 'toggle_business': setIsBusinessView(!isBusinessView); break;
+      case 'fullscreen': if(!document.fullscreenElement) document.documentElement.requestFullscreen(); else document.exitFullscreen(); break;
+
+      case 'validate': toggleRightPanel('validate'); break;
+      case 'compare': handleCreateCompareTab(); break;
+      case 'mapper': setAppMode(AppMode.MAPPER); break;
+      case 'ai_studio': setAppMode(AppMode.AI_STUDIO); setIsRightPanelOpen(false); break;
+
+      case 'ai_explain': toggleRightPanel('chat'); break;
+      case 'ai_chat': toggleRightPanel('chat'); break;
+      
+      case 'about': alert('EDI Insight AI Studio v1.0'); break;
+    }
+  };
+
+  const commands: CommandItem[] = [
+    { id: 'new_file', label: 'New File', category: 'File', shortcut: 'Ctrl+N', icon: <FilePlus size={14} /> },
+    { id: 'save_file', label: 'Save File', category: 'File', shortcut: 'Ctrl+S', icon: <Save size={14} /> },
+    { id: 'open_file', label: 'Open File', category: 'File', shortcut: 'Ctrl+O', icon: <FolderOpen size={14} /> },
+    { id: 'export_json', label: 'Export to JSON', category: 'File', icon: <FileJson size={14} /> },
+    { id: 'validate', label: 'Validate EDI Structure', category: 'Tools', icon: <Activity size={14} /> },
+    { id: 'ai_studio', label: 'Open AI Studio', category: 'AI', icon: <BrainCircuit size={14} /> },
+    { id: 'toggle_business', label: 'Generate Business View', category: 'View', icon: <BookOpen size={14} /> },
+    { id: 'toggle_sidebar', label: 'Toggle Sidebar', category: 'View', shortcut: 'Ctrl+B' },
+    { id: 'warp', label: 'Format: Warp (Single Line)', category: 'Edit' },
+    { id: 'unwarp', label: 'Format: Unwarp (Pretty Print)', category: 'Edit' },
+    { id: 'find', label: 'Find & Replace', category: 'Edit', shortcut: 'Ctrl+F' },
+    { id: 'mapper', label: 'Switch to Mapper', category: 'Tools' },
+  ];
+
   const renderMainArea = () => {
+    // AI Studio Mode
+    if (appMode === AppMode.AI_STUDIO) {
+      return (
+        <div className="h-full bg-slate-900 overflow-hidden relative">
+           <AnalysisPanel 
+              activeTab="chat"
+              analysis={activeFile?.analysis || null} 
+              activeFileContent={activeFile?.content || ''}
+              contextFiles={chatContextFiles}
+              loading={appState === AppState.ANALYZING} 
+              onUpdateContent={updateActiveContent}
+              onClose={() => setAppMode(AppMode.EDITOR)} // Close button in studio goes back to editor
+              onSplitFiles={handleSplitFiles}
+              onStediClick={() => setIsStediOpen(true)}
+              hasApiKey={hasApiKey}
+              isFullScreen={true}
+            />
+        </div>
+      );
+    }
+
     if (!activeFile) {
       return (
         <div className="h-full flex flex-col items-center justify-center text-slate-400 relative overflow-hidden">
@@ -426,7 +522,6 @@ function App() {
                 content={activeFile.content} 
                 onChange={updateActiveContent} 
                 fileName={activeFile.name}
-                searchTerm={searchTerm}
                 settings={settings}
                 onSave={handleDownloadFile}
                 onStateChange={setEditorState}
@@ -441,11 +536,16 @@ function App() {
     <div className="flex flex-col h-screen bg-slate-950 font-sans overflow-hidden text-slate-200 selection:bg-blue-500/30 relative">
       <div className="absolute inset-0 z-0"><InteractiveBackground /></div>
 
+      {/* Top Menu Bar (NEW) */}
+      <div className="flex-none z-40 bg-slate-900 border-b border-white/5">
+         <MenuBar onAction={handleCommand} />
+      </div>
+
       {/* Header */}
       <header ref={headerRef} className="flex-none bg-slate-900/80 backdrop-blur-xl border-b border-white/5 px-4 py-2 flex items-center justify-between z-30 h-14 relative shadow-sm">
         <div className="flex items-center gap-3">
-          <button onClick={() => setIsSidebarOpen(!isSidebarOpen)} className="p-2 rounded-lg hover:bg-white/5 text-slate-400 hover:text-white transition-colors">
-             {isSidebarOpen ? <ChevronLeft size={18} /> : <ChevronRight size={18} />}
+          <button onClick={() => setIsSidebarOpen(!isSidebarOpen)} className="p-2 rounded-lg hover:bg-white/5 text-slate-400 hover:text-white transition-colors" title="Toggle Sidebar (Ctrl+B)">
+             <Layout size={18} />
           </button>
           <div className="bg-gradient-to-br from-blue-600 to-indigo-600 p-2 rounded-lg text-white shadow-lg shadow-blue-500/20">
             <FileCode size={18} />
@@ -459,13 +559,14 @@ function App() {
           </div>
         </div>
 
-        <div className="hidden md:flex bg-slate-800/50 p-1 rounded-lg border border-white/5 backdrop-blur-md">
-          <button onClick={() => setAppMode(AppMode.EDITOR)} className={`flex items-center gap-2 px-4 py-1.5 rounded-md text-xs font-medium transition-all duration-300 ${appMode === AppMode.EDITOR ? 'bg-blue-600 text-white shadow-md shadow-blue-500/20' : 'text-slate-400 hover:text-slate-200 hover:bg-white/5'}`}>
-            <PenTool size={12} /> Editor
-          </button>
-          <button onClick={() => setAppMode(AppMode.MAPPER)} className={`flex items-center gap-2 px-4 py-1.5 rounded-md text-xs font-medium transition-all duration-300 ${appMode === AppMode.MAPPER ? 'bg-emerald-600 text-white shadow-md shadow-emerald-500/20' : 'text-slate-400 hover:text-slate-200 hover:bg-white/5'}`}>
-            <Layout size={12} /> Mapper
-          </button>
+        {/* Minimized Centered Search/Palette Trigger */}
+        <div 
+          onClick={() => setIsCommandPaletteOpen(true)}
+          className="hidden md:flex items-center gap-3 bg-slate-800/50 hover:bg-slate-800 border border-white/5 hover:border-white/10 px-4 py-1.5 rounded-lg cursor-pointer transition-all group w-64"
+        >
+           <Search size={14} className="text-slate-500 group-hover:text-blue-400" />
+           <span className="text-xs text-slate-500 group-hover:text-slate-300">Search commands...</span>
+           <span className="text-[10px] bg-slate-700 px-1.5 rounded text-slate-400 ml-auto border border-white/5">Ctrl+P</span>
         </div>
 
         <div className="flex items-center gap-2 text-slate-400">
@@ -481,41 +582,26 @@ function App() {
            )}
 
            <button onClick={() => setIsVoiceAgentOpen(true)} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full transition-all text-xs font-bold border ${isVoiceAgentOpen ? 'bg-indigo-600 text-white border-indigo-500 shadow-lg shadow-indigo-500/20' : 'bg-white/5 border-white/10 text-slate-300 hover:bg-white/10 hover:text-white'}`}>
-              <Mic size={14} /> Live Agent
+              <Mic size={14} /> Live
            </button>
 
            <div className="w-px h-5 bg-white/10 mx-1 hidden sm:block"></div>
 
-           <button onClick={() => toggleRightPanel('chat')} className={`p-2 rounded-lg transition-all duration-300 ${isRightPanelOpen && activeRightTab === 'chat' ? 'bg-blue-500/20 text-blue-400' : 'hover:bg-white/5 hover:text-white'}`} title="Chat Assistant">
-              <MessageSquare size={18} />
-           </button>
-           
-           <button onClick={() => toggleRightPanel('tools')} className={`p-2 rounded-lg transition-all duration-300 ${isRightPanelOpen && activeRightTab === 'tools' ? 'bg-purple-500/20 text-purple-400' : 'hover:bg-white/5 hover:text-white'}`} title="Generators">
-              <Bot size={18} />
+           <button onClick={() => setAppMode(AppMode.AI_STUDIO)} className={`p-2 rounded-lg transition-all duration-300 ${appMode === AppMode.AI_STUDIO ? 'bg-indigo-600 text-white shadow-lg' : 'hover:bg-white/5 hover:text-white'}`} title="AI Studio">
+              <BrainCircuit size={18} />
            </button>
 
-           <div className="w-px h-5 bg-white/10 mx-1 hidden sm:block"></div>
+           {appMode !== AppMode.AI_STUDIO && (
+             <button onClick={() => toggleRightPanel('chat')} className={`p-2 rounded-lg transition-all duration-300 ${isRightPanelOpen && activeRightTab === 'chat' ? 'bg-blue-500/20 text-blue-400' : 'hover:bg-white/5 hover:text-white'}`} title="Chat Panel">
+                <MessageSquare size={18} />
+             </button>
+           )}
            
-           <button onClick={() => setIsSearchOpen(!isSearchOpen)} className={`p-2 rounded-lg transition-colors ${isSearchOpen ? 'bg-white/10 text-white' : 'hover:bg-white/5 hover:text-white'}`}>
-              <Search size={18} />
-           </button>
-
            <button onClick={() => setIsSettingsOpen(true)} className={`p-2 rounded-lg transition-colors ${!hasApiKey ? 'text-amber-400 animate-pulse' : 'hover:text-white hover:bg-white/5'}`} title={!hasApiKey ? "API Key Required" : "Settings"}>
              <Settings size={18} />
            </button>
         </div>
       </header>
-
-      {/* Search Bar Overlay */}
-      {isSearchOpen && (
-        <div className="absolute top-14 left-0 right-0 z-30 bg-slate-900/90 border-b border-white/10 p-3 flex justify-center shadow-2xl backdrop-blur-md animate-in slide-in-from-top-2">
-           <div className="relative w-full max-w-lg group">
-             <input type="text" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} placeholder="Find segment, element, or value..." className="w-full bg-slate-950 text-slate-200 text-sm border border-slate-800 rounded-xl pl-10 pr-10 py-2.5 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all placeholder:text-slate-600" autoFocus />
-             <Search size={16} className="absolute left-3.5 top-3 text-slate-500 group-focus-within:text-blue-500 transition-colors" />
-             {searchTerm && <button onClick={() => setSearchTerm('')} className="absolute right-3 top-2.5 text-slate-500 hover:text-white transition-colors"><X size={16} /></button>}
-           </div>
-        </div>
-      )}
 
       {/* Workspace */}
       <div className="flex-1 flex overflow-hidden relative z-10">
@@ -525,10 +611,10 @@ function App() {
              files={files} 
              activeFileId={activeFileId} 
              selectedFileIds={selectedFileIds}
-             onSelectFile={setActiveFileId} 
+             onSelectFile={(id) => { setActiveFileId(id); setAppMode(AppMode.EDITOR); }} 
              onToggleSelection={toggleFileSelection}
              onCompareSelected={handleCreateCompareTab}
-             onAiSummarizeSelected={() => {}}
+             onAiSummarizeSelected={() => { setAppMode(AppMode.AI_STUDIO); }}
              onNewFile={handleNewFile}
              onDeleteFile={handleDeleteFile}
              onUpload={handleFileUpload}
@@ -540,8 +626,8 @@ function App() {
            {renderMainArea()}
         </div>
 
-        {/* Right Panel */}
-        {isRightPanelOpen && activeFile && !activeFile.isCompareView && (
+        {/* Right Panel - Hidden if in AI Studio Mode */}
+        {isRightPanelOpen && appMode !== AppMode.AI_STUDIO && activeFile && !activeFile.isCompareView && (
             <div ref={rightPanelRef} className="flex-none z-30 bg-slate-900/90 backdrop-blur-xl border-l border-white/10 shadow-2xl overflow-hidden flex flex-col transition-all duration-300 ease-in-out" style={{ width: PANEL_WIDTH }}>
               <div className="flex items-center justify-between px-4 py-3 bg-slate-900/50 border-b border-white/5 flex-none">
                 <span className="text-xs font-bold uppercase tracking-wider text-slate-400 flex items-center gap-2">
@@ -587,6 +673,14 @@ function App() {
       <StediModal isOpen={isStediOpen} onClose={() => setIsStediOpen(false)} activeFileContent={activeFile?.content || ''} />
       <LiveVoiceAgent isOpen={isVoiceAgentOpen} onClose={() => setIsVoiceAgentOpen(false)} files={chatContextFiles} hasApiKey={hasApiKey && settings.aiProvider === 'gemini'} />
       <AuthModal isOpen={isAuthModalOpen} onClose={() => setIsAuthModalOpen(false)} />
+      
+      {/* Command Palette Overlay */}
+      <CommandPalette 
+        isOpen={isCommandPaletteOpen} 
+        onClose={() => setIsCommandPaletteOpen(false)} 
+        commands={commands}
+        onExecute={handleCommand}
+      />
     </div>
   );
 }

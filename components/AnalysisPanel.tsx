@@ -1,7 +1,7 @@
 
 import React, { useState, useRef, useEffect, useLayoutEffect } from 'react';
 import ReactMarkdown from 'react-markdown';
-import { Send, Bot, User, Loader2, AlertTriangle, CheckCircle, AlertOctagon, BrainCircuit, Globe, Layers, Sparkles, Wand2, Lock, Key, Image, Download, Film, ChevronDown, ChevronUp, Link as LinkIcon } from 'lucide-react';
+import { Send, Bot, User, Loader2, AlertTriangle, CheckCircle, AlertOctagon, BrainCircuit, Globe, Layers, Sparkles, Wand2, Lock, Key, Image, Download, Film, ChevronDown, ChevronUp, Link as LinkIcon, Maximize, X, MessageCircle } from 'lucide-react';
 import { EdiAnalysisResult, ChatMessage, ValidationResult, EdiFile, PanelTab, OrchestratedResult } from '../types';
 import { sendEdiChat, generateEdiFlowImage, generateEdiFlowVideo } from '../services/geminiService';
 import { validationOrchestrator } from '../services/validationOrchestrator';
@@ -21,6 +21,7 @@ interface AnalysisPanelProps {
   onSplitFiles?: (files: { name: string; content: string }[]) => void;
   onStediClick?: () => void;
   hasApiKey?: boolean;
+  isFullScreen?: boolean;
 }
 
 type ChatMode = 'standard' | 'thinking' | 'search' | 'image' | 'video';
@@ -34,7 +35,9 @@ const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
   onUpdateContent,
   onSplitFiles,
   onStediClick,
-  hasApiKey = false
+  hasApiKey = false,
+  onClose,
+  isFullScreen = false
 }) => {
   const [chatInput, setChatInput] = useState('');
   const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]);
@@ -241,7 +244,26 @@ const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
   };
 
   return (
-    <div className="flex flex-col h-full bg-slate-950/80 backdrop-blur-xl">
+    <div className={`flex flex-col h-full bg-slate-950/80 backdrop-blur-xl ${isFullScreen ? 'bg-slate-950' : ''}`}>
+      
+      {/* Studio Header (Only in Full Screen) */}
+      {isFullScreen && (
+        <div className="flex-none h-14 border-b border-white/5 bg-slate-900 px-6 flex items-center justify-between">
+           <div className="flex items-center gap-3">
+              <div className="bg-indigo-600 p-1.5 rounded-lg text-white">
+                 <BrainCircuit size={20} />
+              </div>
+              <div>
+                 <h2 className="text-sm font-bold text-white">AI Studio</h2>
+                 <p className="text-[10px] text-slate-400">Advanced EDI Intelligence Workspace</p>
+              </div>
+           </div>
+           <button onClick={onClose} className="p-2 hover:bg-white/10 rounded-full text-slate-400 hover:text-white transition-colors">
+              <X size={20} />
+           </button>
+        </div>
+      )}
+
       <div className="flex-1 overflow-hidden relative">
         {activeTab === 'json' && <JsonPanel ediContent={activeFileContent} />}
 
@@ -295,7 +317,7 @@ const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
         )}
 
         {activeTab === 'chat' && (
-          <div className="h-full flex flex-col">
+          <div className={`h-full flex flex-col ${isFullScreen ? 'max-w-5xl mx-auto w-full' : ''}`}>
             {/* Context Bar */}
             <div className="bg-slate-900/30 border-b border-white/5 px-4 py-2 flex items-center justify-between flex-none backdrop-blur-md">
               <div className="flex items-center gap-2 text-[10px] font-semibold text-slate-500 uppercase tracking-widest">
@@ -318,10 +340,24 @@ const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
                   <div className="w-20 h-20 bg-gradient-to-br from-blue-500/10 to-purple-500/10 rounded-3xl flex items-center justify-center mb-6 border border-white/5 shadow-[0_0_40px_rgba(59,130,246,0.15)]">
                     <Bot className="w-10 h-10 text-blue-400" />
                   </div>
-                  <h3 className="font-bold text-white text-lg mb-2">EDI Intelligence Engine</h3>
-                  <p className="text-sm text-slate-400 max-w-[260px] leading-relaxed">
-                    I am specialized in EDI standards (X12/EDIFACT). Ask me to validate structure, explain segments, or map data.
+                  <h3 className="font-bold text-white text-lg mb-2">EDI Insight AI</h3>
+                  <p className="text-sm text-slate-400 max-w-[320px] leading-relaxed">
+                    Specialized agent for EDI standards, ERP integrations, and supply chain documents.
                   </p>
+                  {isFullScreen && (
+                     <div className="mt-8 grid grid-cols-2 gap-4 max-w-lg w-full">
+                        <button onClick={() => executeSendMessage("Generate a flow diagram for 850, 855, 856, 810")} className="p-4 bg-slate-800 hover:bg-slate-700 rounded-xl border border-white/5 text-left transition-all hover:border-blue-500/30 group">
+                           <Image className="mb-2 text-pink-400 group-hover:scale-110 transition-transform" />
+                           <div className="font-bold text-sm text-white">Generate Flow Diagram</div>
+                           <div className="text-xs text-slate-500">Visualize TP documents</div>
+                        </button>
+                        <button onClick={() => executeSendMessage("Explain the difference between X12 850 and EDIFACT ORDERS")} className="p-4 bg-slate-800 hover:bg-slate-700 rounded-xl border border-white/5 text-left transition-all hover:border-blue-500/30 group">
+                           <MessageCircle className="mb-2 text-blue-400 group-hover:scale-110 transition-transform" />
+                           <div className="font-bold text-sm text-white">Compare Standards</div>
+                           <div className="text-xs text-slate-500">X12 vs EDIFACT Analysis</div>
+                        </button>
+                     </div>
+                  )}
                 </div>
               ) : (
                 chatHistory.map((msg, idx) => (

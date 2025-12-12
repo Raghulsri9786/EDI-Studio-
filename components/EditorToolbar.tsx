@@ -9,7 +9,6 @@ interface EditorToolbarProps {
   editorRef: React.RefObject<EditorHandle>;
   editorState: EditorState;
   isBusinessView?: boolean;
-  onToggleBusinessView?: () => void;
   ediContent?: string;
 }
 
@@ -49,7 +48,7 @@ const EditorToolbar: React.FC<EditorToolbarProps> = ({ editorRef, editorState, i
         disabled={disabled}
         title={title}
         className={`
-            p-1.5 rounded-lg transition-colors 
+            p-1.5 rounded-lg transition-colors flex items-center justify-center
             ${active ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-400 hover:text-white hover:bg-white/5'} 
             ${disabled ? 'opacity-30 cursor-not-allowed' : ''}
         `}
@@ -91,12 +90,12 @@ const EditorToolbar: React.FC<EditorToolbarProps> = ({ editorRef, editorState, i
         </div>
       )}
 
-      {/* Primary View Toggles - Only essential controls remain */}
-      <div className="bg-slate-800/50 rounded-lg p-0.5 border border-white/5 flex">
-         <ActionButton onClick={() => editorRef.current?.toggleEditMode()} active={editorState.isEditing && !isBusinessView} title="Edit Source" disabled={isBusinessView}>
+      {/* View Toggles */}
+      <div className="bg-slate-800/50 rounded-lg p-0.5 border border-white/5 flex gap-0.5">
+         <ActionButton onClick={() => editorRef.current?.toggleEditMode()} active={editorState.isEditing && !isBusinessView} title="Source Code (Edit)" disabled={isBusinessView}>
             <Edit3 size={14} />
          </ActionButton>
-         <ActionButton onClick={() => editorRef.current?.toggleEditMode()} active={!editorState.isEditing && !isBusinessView} title="Visual Parser" disabled={!editorState.isEdiMode || isBusinessView}>
+         <ActionButton onClick={() => editorRef.current?.toggleEditMode()} active={!editorState.isEditing && !isBusinessView} title="Visual Viewer" disabled={!editorState.isEdiMode || isBusinessView}>
             <Eye size={14} />
          </ActionButton>
       </div>

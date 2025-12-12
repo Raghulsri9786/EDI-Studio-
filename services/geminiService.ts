@@ -141,6 +141,26 @@ const ensureAiStudioKey = async (): Promise<string | undefined> => {
   return undefined;
 };
 
+// Helper to check for permission/not-found errors in various formats
+const isPermissionOrNotFoundError = (error: any): boolean => {
+    if (!error) return false;
+    
+    // Direct status check
+    if (error.status === 403 || error.status === 404) return true;
+    
+    // Message check
+    const msg = error.message?.toLowerCase() || '';
+    if (msg.includes("403") || msg.includes("404") || msg.includes("permission") || msg.includes("not found") || msg.includes("entity was not found")) return true;
+    
+    // Nested error object (common in Google APIs)
+    if (error.error) {
+        if (error.error.code === 403 || error.error.code === 404) return true;
+        if (error.error.status === "PERMISSION_DENIED" || error.error.status === "NOT_FOUND") return true;
+    }
+    
+    return false;
+};
+
 // --- DeepSeek Implementation ---
 
 const callDeepSeek = async (
@@ -280,9 +300,7 @@ export const generateEdiFlowImage = async (prompt: string, imageSize: "1K" | "2K
     console.error("Image Gen Error (Pro)", error);
     
     // Handle 403 Permission Denied or 404 Model Not Found
-    const isPermissionError = error.status === 403 || error.message?.includes("403") || error.status === 404 || error.message?.includes("404");
-    
-    if (isPermissionError) {
+    if (isPermissionOrNotFoundError(error)) {
         // 1. Try to prompt for key if in AI Studio
         if (typeof window !== 'undefined' && (window as any).aistudio) {
             try {
@@ -383,9 +401,7 @@ export const generateEdiFlowVideo = async (prompt: string): Promise<string> => {
     console.error("Video Gen Error", error);
     
     // RETRY LOGIC: Handle 404 Not Found (common for Veo access) or 403
-    const isPermissionError = error.status === 403 || error.message?.includes("403") || error.status === 404 || error.message?.includes("404") || error.message?.includes("entity was not found");
-
-    if (isPermissionError && typeof window !== 'undefined' && (window as any).aistudio) {
+    if (isPermissionOrNotFoundError(error) && typeof window !== 'undefined' && (window as any).aistudio) {
         try {
             console.log("Permission error on Video Gen. Prompting for key...");
             await (window as any).aistudio.openSelectKey();
@@ -393,7 +409,7 @@ export const generateEdiFlowVideo = async (prompt: string): Promise<string> => {
             const newKey = process.env.API_KEY || apiKey;
             return await performGeneration(newKey);
         } catch (retryError: any) {
-            throw new Error("Veo model access denied after retry. Please ensure you selected a valid Paid Project API Key.");
+            throw new Error("Veo model access denied. Please ensure your project has the 'Vertex AI API' enabled and you are using a key from a Paid Project.");
         }
     }
 

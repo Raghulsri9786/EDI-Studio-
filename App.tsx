@@ -1,6 +1,6 @@
 
-import React, { useState, useEffect, useRef, useLayoutEffect } from 'react';
-import { Activity, GitCompare, Layout, FileCode, Search, Settings, X, MessageSquare, Mic, Database, Cloud, UserCircle, LogOut, FilePlus, FolderOpen, Save, FileJson, BrainCircuit, BookOpen } from 'lucide-react';
+import React, { useState, useEffect, useRef, useLayoutEffect, useCallback } from 'react';
+import { Activity, GitCompare, Layout, FileCode, Search, Settings, X, MessageSquare, Mic, Database, Cloud, UserCircle, LogOut, FilePlus, FolderOpen, Save, FileJson, BrainCircuit, BookOpen, Download, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, GripVertical } from 'lucide-react';
 import Editor, { EditorHandle, EditorState } from './components/Editor';
 import EditorToolbar from './components/EditorToolbar';
 import AnalysisPanel from './components/AnalysisPanel';
@@ -17,6 +17,7 @@ import CloudFileManager from './components/CloudFileManager';
 import HumanReadablePanel from './components/HumanReadablePanel';
 import MenuBar from './components/MenuBar';
 import CommandPalette, { CommandItem } from './components/CommandPalette';
+import SaveAsModal from './components/SaveAsModal';
 import { AppState, AppMode, EdiFile, AppSettings, PanelTab } from './types';
 import { animatePageEntrance, animatePanelEnter, animatePanelExit } from './utils/gsapAnimations';
 import { storageService } from './services/storageService';
@@ -37,20 +38,27 @@ function App() {
   const [files, setFiles] = useState<EdiFile[]>([]);
   const [activeFileId, setActiveFileId] = useState<string | null>(null);
   const [selectedFileIds, setSelectedFileIds] = useState<Set<string>>(new Set());
+  const [openFileIds, setOpenFileIds] = useState<string[]>([]);
   const [dbLoaded, setDbLoaded] = useState(false);
   
   const [appState, setAppState] = useState<AppState>(AppState.IDLE);
   const [appMode, setAppMode] = useState<AppMode>(AppMode.EDITOR);
   const [isBusinessView, setIsBusinessView] = useState(false);
 
-  const [isRightPanelOpen, setIsRightPanelOpen] = useState(false);
-  const [activeRightTab, setActiveRightTab] = useState<PanelTab>('chat');
-
+  // Layout State
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+  const [sidebarWidth, setSidebarWidth] = useState(260);
+  
+  const [isRightPanelOpen, setIsRightPanelOpen] = useState(false);
+  const [rightPanelWidth, setRightPanelWidth] = useState(420);
+  const [activeRightTab, setActiveRightTab] = useState<PanelTab>('chat');
+  
+  const [isResizing, setIsResizing] = useState(false); // Disable transitions while dragging
 
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
+  const [isSaveAsModalOpen, setIsSaveAsModalOpen] = useState(false);
   
   const [settings, setSettings] = useState<AppSettings>({
     fontSize: 'medium',
@@ -85,17 +93,52 @@ function App() {
   const mainRef = useRef<HTMLDivElement>(null);
   const rightPanelRef = useRef<HTMLDivElement>(null);
 
-  // Default Widths
-  const SIDEBAR_WIDTH = 260;
-  const PANEL_WIDTH = 420;
-
   const activeFile = files.find(f => f.id === activeFileId);
   const selectedFiles = files.filter(f => selectedFileIds.has(f.id));
   const chatContextFiles = selectedFiles.length > 0 ? selectedFiles : (activeFile ? [activeFile] : []);
+  
+  // Derived open files list for tabs based on openFileIds order
+  const openFiles = openFileIds
+    .map(id => files.find(f => f.id === id))
+    .filter(f => f !== undefined) as EdiFile[];
 
   const hasApiKey = settings.aiProvider === 'deepseek' 
     ? !!settings.deepSeekApiKey 
     : !!settings.geminiApiKey;
+
+  // --- Resizing Logic ---
+
+  const startResizing = useCallback((direction: 'left' | 'right') => (mouseDownEvent: React.MouseEvent) => {
+    mouseDownEvent.preventDefault();
+    setIsResizing(true);
+
+    const startX = mouseDownEvent.clientX;
+    const startWidth = direction === 'left' ? sidebarWidth : rightPanelWidth;
+
+    const onMouseMove = (mouseMoveEvent: MouseEvent) => {
+      const deltaX = mouseMoveEvent.clientX - startX;
+      
+      if (direction === 'left') {
+        const newWidth = Math.max(180, Math.min(600, startWidth + deltaX));
+        setSidebarWidth(newWidth);
+      } else {
+        const newWidth = Math.max(300, Math.min(800, startWidth - deltaX));
+        setRightPanelWidth(newWidth);
+      }
+    };
+
+    const onMouseUp = () => {
+      setIsResizing(false);
+      document.removeEventListener("mousemove", onMouseMove);
+      document.removeEventListener("mouseup", onMouseUp);
+      document.body.style.cursor = 'default';
+    };
+
+    document.addEventListener("mousemove", onMouseMove);
+    document.addEventListener("mouseup", onMouseUp);
+    document.body.style.cursor = 'col-resize';
+  }, [sidebarWidth, rightPanelWidth]);
+
 
   // Global Key Down Listener for Command Palette & Shortcuts
   useEffect(() => {
@@ -125,13 +168,17 @@ function App() {
       // Save (Ctrl+S)
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
         e.preventDefault();
-        handleDownloadFile(); // Or save logic
+        if (e.shiftKey) {
+          setIsSaveAsModalOpen(true); // Save As
+        } else {
+          handleDownloadFile(); // Standard Save
+        }
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, []);
+  }, [activeFileId]);
 
   // Initialize Settings & Data
   useEffect(() => {
@@ -150,7 +197,11 @@ function App() {
         if (storedFiles && storedFiles.length > 0) {
           setFiles(storedFiles);
           storedFiles.sort((a,b) => new Date(b.lastModified).getTime() - new Date(a.lastModified).getTime());
-          setActiveFileId(storedFiles[0].id);
+          
+          // Only open the most recent file by default
+          const mostRecent = storedFiles[0];
+          setOpenFileIds([mostRecent.id]);
+          setActiveFileId(mostRecent.id);
           setAppState(AppState.VIEWING);
         }
       } catch (err) {
@@ -212,6 +263,28 @@ function App() {
     }
   };
 
+  const handleOpenFile = (id: string) => {
+    if (!openFileIds.includes(id)) {
+      setOpenFileIds(prev => [...prev, id]);
+    }
+    setActiveFileId(id);
+    setAppMode(AppMode.EDITOR);
+  };
+
+  const handleCloseTab = (id: string) => {
+    const newOpenIds = openFileIds.filter(oid => oid !== id);
+    setOpenFileIds(newOpenIds);
+    
+    if (activeFileId === id) {
+      // If we closed the active tab, switch to the last one in the list, or null if empty
+      if (newOpenIds.length > 0) {
+         setActiveFileId(newOpenIds[newOpenIds.length - 1]);
+      } else {
+         setActiveFileId(null);
+      }
+    }
+  };
+
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const fileList = event.target.files;
     if (!fileList || fileList.length === 0) return;
@@ -244,7 +317,10 @@ function App() {
       });
 
       if (loadedFiles.length > 0) {
-        setActiveFileId(loadedFiles[0].id);
+        // Open the uploaded files in tabs
+        const newIds = loadedFiles.map(f => f.id);
+        setOpenFileIds(prev => [...prev, ...newIds]);
+        setActiveFileId(newIds[0]);
         setAppState(AppState.VIEWING);
       }
       event.target.value = ''; 
@@ -262,6 +338,8 @@ function App() {
     };
     setFiles(prev => [...prev, newFile]);
     storageService.saveFile(newFile);
+    
+    setOpenFileIds(prev => [...prev, newFile.id]);
     setActiveFileId(newFile.id);
     setAppState(AppState.VIEWING);
   };
@@ -275,22 +353,34 @@ function App() {
     }));
     
     storageService.saveAllFiles(newFiles);
-    
     setFiles(prev => [...prev, ...newFiles]);
 
     if (newFiles.length > 0) {
+        // Open only the first split file to avoid clutter
+        setOpenFileIds(prev => [...prev, newFiles[0].id]);
         setActiveFileId(newFiles[0].id);
     }
   };
 
+  // Permanent Deletion from Explorer & Storage
   const handleDeleteFile = (id: string) => {
     const newFiles = files.filter(f => f.id !== id);
     setFiles(newFiles);
     storageService.deleteFile(id);
 
-    if (activeFileId === id) {
-      setActiveFileId(newFiles.length > 0 ? newFiles[newFiles.length - 1].id : null);
+    // Also close the tab if open
+    if (openFileIds.includes(id)) {
+        setOpenFileIds(prev => prev.filter(oid => oid !== id));
+        if (activeFileId === id) {
+            const remainingOpen = openFileIds.filter(oid => oid !== id);
+            if (remainingOpen.length > 0) {
+                setActiveFileId(remainingOpen[remainingOpen.length - 1]);
+            } else {
+                setActiveFileId(null);
+            }
+        }
     }
+    
     if (selectedFileIds.has(id)) {
       const newSet = new Set(selectedFileIds);
       newSet.delete(id);
@@ -352,7 +442,9 @@ function App() {
       isCompareView: true,
       compareData: { files: [...selectedFiles] }
     };
+    // Compare views are transient, add to files state but usually not storage unless saved
     setFiles(prev => [...prev, compareFile]);
+    setOpenFileIds(prev => [...prev, compareFile.id]);
     setActiveFileId(compareFile.id);
     setSelectedFileIds(new Set());
   };
@@ -360,10 +452,14 @@ function App() {
   const handleLoadCloudFile = (cloudFile: EdiFile) => {
     const existing = files.find(f => f.cloudId === cloudFile.cloudId);
     if (existing) {
+      if (!openFileIds.includes(existing.id)) {
+        setOpenFileIds(prev => [...prev, existing.id]);
+      }
       setActiveFileId(existing.id);
     } else {
       setFiles(prev => [...prev, cloudFile]);
       storageService.saveFile(cloudFile);
+      setOpenFileIds(prev => [...prev, cloudFile.id]);
       setActiveFileId(cloudFile.id);
     }
   };
@@ -378,9 +474,10 @@ function App() {
       case 'new_file': handleNewFile(); break;
       case 'open_file': (document.querySelector('input[type="file"]') as HTMLInputElement)?.click(); break;
       case 'save_file': handleDownloadFile(); break;
+      case 'save_as': setIsSaveAsModalOpen(true); break;
       case 'export_json': editorRef.current?.download('json'); break;
       case 'export_xml': editorRef.current?.download('xml'); break;
-      case 'close_file': if(activeFileId) handleDeleteFile(activeFileId); break;
+      case 'close_file': if(activeFileId) handleCloseTab(activeFileId); break; // Close tab only
       
       case 'undo': editorRef.current?.undo(); break;
       case 'redo': editorRef.current?.redo(); break;
@@ -409,6 +506,7 @@ function App() {
   const commands: CommandItem[] = [
     { id: 'new_file', label: 'New File', category: 'File', shortcut: 'Ctrl+N', icon: <FilePlus size={14} /> },
     { id: 'save_file', label: 'Save File', category: 'File', shortcut: 'Ctrl+S', icon: <Save size={14} /> },
+    { id: 'save_as', label: 'Save As...', category: 'File', shortcut: 'Ctrl+Shift+S', icon: <Download size={14} /> },
     { id: 'open_file', label: 'Open File', category: 'File', shortcut: 'Ctrl+O', icon: <FolderOpen size={14} /> },
     { id: 'export_json', label: 'Export to JSON', category: 'File', icon: <FileJson size={14} /> },
     { id: 'validate', label: 'Validate EDI Structure', category: 'Tools', icon: <Activity size={14} /> },
@@ -425,7 +523,7 @@ function App() {
     // AI Studio Mode
     if (appMode === AppMode.AI_STUDIO) {
       return (
-        <div className="h-full bg-slate-900 overflow-hidden relative">
+        <div className="h-full bg-slate-900 overflow-hidden relative w-full">
            <AnalysisPanel 
               activeTab="chat"
               analysis={activeFile?.analysis || null} 
@@ -445,7 +543,7 @@ function App() {
 
     if (!activeFile) {
       return (
-        <div className="h-full flex flex-col items-center justify-center text-slate-400 relative overflow-hidden">
+        <div className="h-full flex flex-col items-center justify-center text-slate-400 relative overflow-hidden w-full">
            <div className="relative z-10 text-center p-8 bg-slate-900/60 backdrop-blur-xl rounded-2xl shadow-2xl border border-white/5 max-w-md mx-4 animate-in fade-in zoom-in duration-700">
              <div className="w-20 h-20 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-full flex items-center justify-center mb-6 mx-auto shadow-lg shadow-blue-900/50">
                <Database size={40} className="text-white" />
@@ -470,14 +568,14 @@ function App() {
 
     if (activeFile.isCompareView) {
       return (
-        <div className="flex flex-col h-full" ref={mainRef}>
+        <div className="flex flex-col h-full w-full" ref={mainRef}>
            <div className="flex items-center justify-between bg-slate-900/50 border-b border-white/5 backdrop-blur-sm pr-3">
              <div className="flex-1 overflow-hidden">
                 <EditorTabs 
-                  files={files} 
+                  files={openFiles} 
                   activeFileId={activeFileId} 
                   onSelect={setActiveFileId} 
-                  onClose={handleDeleteFile} 
+                  onClose={handleCloseTab} 
                 />
              </div>
            </div>
@@ -489,14 +587,14 @@ function App() {
     }
 
     return (
-      <div className="flex flex-col h-full" ref={mainRef}>
+      <div className="flex flex-col h-full w-full" ref={mainRef}>
         <div className="flex items-center justify-between bg-slate-900/50 border-b border-white/5 backdrop-blur-sm pr-3 h-10 relative z-20">
            <div className="flex-1 overflow-hidden">
               <EditorTabs 
-                files={files} 
+                files={openFiles} 
                 activeFileId={activeFileId} 
                 onSelect={setActiveFileId} 
-                onClose={handleDeleteFile} 
+                onClose={handleCloseTab} 
               />
            </div>
            <div className="flex-none pl-2">
@@ -504,7 +602,6 @@ function App() {
                 editorRef={editorRef} 
                 editorState={editorState}
                 isBusinessView={isBusinessView}
-                onToggleBusinessView={() => setIsBusinessView(!isBusinessView)}
                 ediContent={activeFile.content}
               />
            </div>
@@ -514,7 +611,10 @@ function App() {
           {appMode === AppMode.MAPPER ? (
              <MapperView ediContent={activeFile.content} hasApiKey={hasApiKey} />
           ) : isBusinessView ? (
-             <HumanReadablePanel ediContent={activeFile.content} />
+             <HumanReadablePanel 
+                ediContent={activeFile.content} 
+                onClose={() => setIsBusinessView(false)}
+             />
           ) : (
              <Editor 
                 ref={editorRef}
@@ -536,82 +636,93 @@ function App() {
     <div className="flex flex-col h-screen bg-slate-950 font-sans overflow-hidden text-slate-200 selection:bg-blue-500/30 relative">
       <div className="absolute inset-0 z-0"><InteractiveBackground /></div>
 
-      {/* Top Menu Bar (NEW) */}
-      <div className="flex-none z-40 bg-slate-900 border-b border-white/5">
-         <MenuBar onAction={handleCommand} />
-      </div>
-
-      {/* Header */}
-      <header ref={headerRef} className="flex-none bg-slate-900/80 backdrop-blur-xl border-b border-white/5 px-4 py-2 flex items-center justify-between z-30 h-14 relative shadow-sm">
-        <div className="flex items-center gap-3">
-          <button onClick={() => setIsSidebarOpen(!isSidebarOpen)} className="p-2 rounded-lg hover:bg-white/5 text-slate-400 hover:text-white transition-colors" title="Toggle Sidebar (Ctrl+B)">
-             <Layout size={18} />
+      {/* SINGLE ROW HEADER (Professional) */}
+      <header ref={headerRef} className="h-[46px] bg-[#0f1624] border-b border-white/5 flex items-center px-4 justify-between z-40 select-none relative shadow-sm">
+        
+        {/* LEFT: App Branding */}
+        <div className="flex items-center gap-4 flex-none">
+          <button 
+            onClick={() => setIsSidebarOpen(!isSidebarOpen)} 
+            className={`text-slate-400 hover:text-white transition-colors p-1 rounded-md hover:bg-white/5 ${!isSidebarOpen ? 'text-blue-400' : ''}`} 
+            title={isSidebarOpen ? "Collapse Sidebar" : "Expand Sidebar"}
+          >
+             {isSidebarOpen ? <PanelLeftClose size={18} /> : <PanelLeftOpen size={18} />}
           </button>
-          <div className="bg-gradient-to-br from-blue-600 to-indigo-600 p-2 rounded-lg text-white shadow-lg shadow-blue-500/20">
-            <FileCode size={18} />
-          </div>
-          <div>
-            <h1 className="text-sm font-bold text-white tracking-tight leading-none">EDI Insight</h1>
-            <div className="flex items-center gap-1.5 mt-0.5">
-              <span className={`w-1.5 h-1.5 rounded-full ${user ? 'bg-blue-500 shadow-[0_0_8px_rgba(59,130,246,0.8)]' : 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]'}`}></span>
-              <p className="text-[10px] text-slate-400 font-medium uppercase tracking-wider">{user ? 'Cloud Sync Active' : 'Local Database'}</p>
-            </div>
-          </div>
-        </div>
-
-        {/* Minimized Centered Search/Palette Trigger */}
-        <div 
-          onClick={() => setIsCommandPaletteOpen(true)}
-          className="hidden md:flex items-center gap-3 bg-slate-800/50 hover:bg-slate-800 border border-white/5 hover:border-white/10 px-4 py-1.5 rounded-lg cursor-pointer transition-all group w-64"
-        >
-           <Search size={14} className="text-slate-500 group-hover:text-blue-400" />
-           <span className="text-xs text-slate-500 group-hover:text-slate-300">Search commands...</span>
-           <span className="text-[10px] bg-slate-700 px-1.5 rounded text-slate-400 ml-auto border border-white/5">Ctrl+P</span>
-        </div>
-
-        <div className="flex items-center gap-2 text-slate-400">
-           {user ? (
-             <div className="flex items-center gap-2 mr-2">
-                <span className="text-xs text-blue-400 font-medium hidden lg:inline">{user.email}</span>
-                <button onClick={() => signOut()} title="Sign Out" className="p-1.5 hover:bg-red-500/10 hover:text-red-400 rounded-lg transition-colors"><LogOut size={16} /></button>
+          <div className="flex items-center gap-3">
+             <div className="bg-blue-600 p-1.5 rounded-lg text-white shadow-lg shadow-blue-500/20">
+                <FileCode size={16} />
              </div>
+             <div className="flex flex-col justify-center">
+                <span className="font-semibold text-[13px] leading-tight text-slate-100">EDI Insight</span>
+                <span className="text-[9px] font-bold text-slate-500 tracking-wide uppercase flex items-center gap-1">
+                   <div className={`w-1.5 h-1.5 rounded-full ${user ? 'bg-blue-500' : 'bg-emerald-500'}`}></div>
+                   {user ? 'Cloud Sync' : 'Local Database'}
+                </span>
+             </div>
+          </div>
+        </div>
+
+        {/* CENTER: Integrated Menu Bar */}
+        <div className="flex-1 flex justify-center h-full">
+           <MenuBar onAction={handleCommand} />
+        </div>
+
+        {/* RIGHT: Controls */}
+        <div className="flex items-center gap-3 flex-none">
+           {user ? (
+             <button onClick={() => signOut()} className="flex items-center gap-2 text-xs text-slate-400 hover:text-white transition-colors">
+                <span className="hidden lg:inline">{user.email}</span>
+                <LogOut size={16} />
+             </button>
            ) : (
-             <button onClick={() => setIsAuthModalOpen(true)} className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600/10 text-blue-400 hover:bg-blue-600 hover:text-white rounded-lg text-xs font-bold transition-all border border-blue-500/20 mr-2">
+             <button onClick={() => setIsAuthModalOpen(true)} className="flex items-center gap-2 px-3 py-1.5 bg-[#1e293b] hover:bg-blue-600 text-blue-400 hover:text-white rounded-md text-xs font-medium transition-all border border-white/10">
                 <UserCircle size={14} /> Sign In
              </button>
            )}
 
-           <button onClick={() => setIsVoiceAgentOpen(true)} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full transition-all text-xs font-bold border ${isVoiceAgentOpen ? 'bg-indigo-600 text-white border-indigo-500 shadow-lg shadow-indigo-500/20' : 'bg-white/5 border-white/10 text-slate-300 hover:bg-white/10 hover:text-white'}`}>
+           <button onClick={() => setIsVoiceAgentOpen(true)} className={`flex items-center gap-2 px-3 py-1.5 rounded-full transition-all text-xs font-bold border ${isVoiceAgentOpen ? 'bg-indigo-600 text-white border-indigo-500 shadow-lg' : 'bg-white/5 border-white/10 text-slate-400 hover:text-white'}`}>
               <Mic size={14} /> Live
            </button>
 
-           <div className="w-px h-5 bg-white/10 mx-1 hidden sm:block"></div>
+           <div className="h-4 w-px bg-white/10 mx-1"></div>
 
-           <button onClick={() => setAppMode(AppMode.AI_STUDIO)} className={`p-2 rounded-lg transition-all duration-300 ${appMode === AppMode.AI_STUDIO ? 'bg-indigo-600 text-white shadow-lg' : 'hover:bg-white/5 hover:text-white'}`} title="AI Studio">
+           <button onClick={() => setAppMode(AppMode.AI_STUDIO)} className={`text-slate-400 hover:text-white transition-colors ${appMode === AppMode.AI_STUDIO ? 'text-indigo-400' : ''}`} title="AI Studio">
               <BrainCircuit size={18} />
            </button>
 
            {appMode !== AppMode.AI_STUDIO && (
-             <button onClick={() => toggleRightPanel('chat')} className={`p-2 rounded-lg transition-all duration-300 ${isRightPanelOpen && activeRightTab === 'chat' ? 'bg-blue-500/20 text-blue-400' : 'hover:bg-white/5 hover:text-white'}`} title="Chat Panel">
-                <MessageSquare size={18} />
+             <button 
+                onClick={() => toggleRightPanel('chat')} 
+                className={`text-slate-400 hover:text-white transition-colors ${isRightPanelOpen && activeRightTab === 'chat' ? 'text-blue-400' : ''}`} 
+                title="Chat Panel"
+             >
+                {isRightPanelOpen ? <PanelRightClose size={18} /> : <PanelRightOpen size={18} />}
              </button>
            )}
            
-           <button onClick={() => setIsSettingsOpen(true)} className={`p-2 rounded-lg transition-colors ${!hasApiKey ? 'text-amber-400 animate-pulse' : 'hover:text-white hover:bg-white/5'}`} title={!hasApiKey ? "API Key Required" : "Settings"}>
+           <button onClick={() => setIsSettingsOpen(true)} className={`text-slate-400 hover:text-white transition-colors ${!hasApiKey ? 'text-amber-400' : ''}`} title={!hasApiKey ? "API Key Required" : "Settings"}>
              <Settings size={18} />
            </button>
         </div>
       </header>
 
-      {/* Workspace */}
-      <div className="flex-1 flex overflow-hidden relative z-10">
+      {/* Main Layout Area */}
+      <div className="flex-1 flex overflow-hidden relative z-10 w-full">
+        
         {/* Left Sidebar */}
-        <div ref={sidebarRef} className={`flex-none flex flex-col h-full overflow-hidden bg-slate-900/50 border-r border-white/5 backdrop-blur-md z-20 transition-all duration-300 ease-in-out`} style={{ width: isSidebarOpen ? SIDEBAR_WIDTH : 0, opacity: isSidebarOpen ? 1 : 0 }}>
+        <div 
+            ref={sidebarRef} 
+            className={`flex-none flex flex-col h-full overflow-hidden bg-slate-900/50 border-r border-white/5 backdrop-blur-md z-20 ${!isResizing ? 'transition-all duration-300 ease-in-out' : ''}`} 
+            style={{ 
+                width: isSidebarOpen ? sidebarWidth : 0, 
+                opacity: isSidebarOpen ? 1 : 0 
+            }}
+        >
            <FileExplorer 
              files={files} 
              activeFileId={activeFileId} 
              selectedFileIds={selectedFileIds}
-             onSelectFile={(id) => { setActiveFileId(id); setAppMode(AppMode.EDITOR); }} 
+             onSelectFile={handleOpenFile} 
              onToggleSelection={toggleFileSelection}
              onCompareSelected={handleCreateCompareTab}
              onAiSummarizeSelected={() => { setAppMode(AppMode.AI_STUDIO); }}
@@ -621,31 +732,54 @@ function App() {
            />
         </div>
 
+        {/* Resizer Handle (Left) */}
+        {isSidebarOpen && (
+            <div
+                className="w-1 h-full cursor-col-resize hover:bg-blue-500/50 active:bg-blue-600 transition-colors z-30 flex-none"
+                onMouseDown={startResizing('left')}
+            />
+        )}
+
         {/* Center Canvas */}
-        <div className="flex-1 flex flex-col min-w-0 relative z-10 transition-all duration-300">
+        <div className="flex-1 flex flex-col min-w-0 relative z-10 h-full overflow-hidden">
            {renderMainArea()}
         </div>
 
+        {/* Resizer Handle (Right) */}
+        {isRightPanelOpen && appMode !== AppMode.AI_STUDIO && (
+            <div
+                className="w-1 h-full cursor-col-resize hover:bg-blue-500/50 active:bg-blue-600 transition-colors z-30 flex-none"
+                onMouseDown={startResizing('right')}
+            />
+        )}
+
         {/* Right Panel - Hidden if in AI Studio Mode */}
-        {isRightPanelOpen && appMode !== AppMode.AI_STUDIO && activeFile && !activeFile.isCompareView && (
-            <div ref={rightPanelRef} className="flex-none z-30 bg-slate-900/90 backdrop-blur-xl border-l border-white/10 shadow-2xl overflow-hidden flex flex-col transition-all duration-300 ease-in-out" style={{ width: PANEL_WIDTH }}>
-              <div className="flex items-center justify-between px-4 py-3 bg-slate-900/50 border-b border-white/5 flex-none">
-                <span className="text-xs font-bold uppercase tracking-wider text-slate-400 flex items-center gap-2">
-                  {activeRightTab === 'chat' && <MessageSquare size={14} className="text-blue-400" />}
-                  {activeRightTab === 'validate' && <Activity size={14} className="text-emerald-400" />}
-                  {activeRightTab === 'tools' && <Cloud size={14} className="text-blue-400" />}
-                  {activeRightTab === 'chat' ? 'AI Assistant' : activeRightTab === 'validate' ? 'Validation Health' : 'Cloud Files'}
-                </span>
-                <div className="flex items-center gap-2">
-                   {activeRightTab !== 'validate' && activeRightTab !== 'chat' && (
-                      <button onClick={() => toggleRightPanel('validate')} title="Validation" className="p-1 text-slate-500 hover:text-emerald-400 transition-colors"><Activity size={14} /></button>
-                   )}
-                   <button onClick={handleCloseRightPanel} className="p-1.5 text-slate-500 hover:text-white hover:bg-white/10 rounded-lg transition-colors"><X size={16} /></button>
-                </div>
-              </div>
-              <div className="flex-1 overflow-hidden">
-                {activeRightTab === 'chat' || activeRightTab === 'validate' ? (
-                  <AnalysisPanel 
+        <div 
+            ref={rightPanelRef} 
+            className={`flex-none z-30 bg-slate-900/90 backdrop-blur-xl border-l border-white/10 shadow-2xl overflow-hidden flex flex-col ${!isResizing ? 'transition-all duration-300 ease-in-out' : ''}`} 
+            style={{ 
+                width: isRightPanelOpen && appMode !== AppMode.AI_STUDIO && activeFile && !activeFile.isCompareView ? rightPanelWidth : 0,
+                opacity: isRightPanelOpen ? 1 : 0
+            }}
+        >
+            <div className="flex items-center justify-between px-4 py-3 bg-slate-900/50 border-b border-white/5 flex-none">
+            <span className="text-xs font-bold uppercase tracking-wider text-slate-400 flex items-center gap-2">
+                {activeRightTab === 'chat' && <MessageSquare size={14} className="text-blue-400" />}
+                {activeRightTab === 'validate' && <Activity size={14} className="text-emerald-400" />}
+                {activeRightTab === 'tools' && <Cloud size={14} className="text-blue-400" />}
+                {activeRightTab === 'chat' ? 'AI Assistant' : activeRightTab === 'validate' ? 'Validation Health' : 'Cloud Files'}
+            </span>
+            <div className="flex items-center gap-2">
+                {activeRightTab !== 'validate' && activeRightTab !== 'chat' && (
+                    <button onClick={() => toggleRightPanel('validate')} title="Validation" className="p-1 text-slate-500 hover:text-emerald-400 transition-colors"><Activity size={14} /></button>
+                )}
+                <button onClick={handleCloseRightPanel} className="p-1.5 text-slate-500 hover:text-white hover:bg-white/10 rounded-lg transition-colors"><X size={16} /></button>
+            </div>
+            </div>
+            <div className="flex-1 overflow-hidden w-full">
+            {(isRightPanelOpen && activeFile && !activeFile.isCompareView) && (
+                activeRightTab === 'chat' || activeRightTab === 'validate' ? (
+                    <AnalysisPanel 
                     activeTab={activeRightTab}
                     analysis={activeFile.analysis || null} 
                     activeFileContent={activeFile.content}
@@ -656,21 +790,22 @@ function App() {
                     onSplitFiles={handleSplitFiles}
                     onStediClick={() => setIsStediOpen(true)}
                     hasApiKey={hasApiKey}
-                  />
+                    />
                 ) : (
-                  <CloudFileManager 
+                    <CloudFileManager 
                     currentFile={activeFile}
                     onLoadFile={handleLoadCloudFile}
                     onFileSaved={handleCloudFileSaved}
-                  />
-                )}
-              </div>
+                    />
+                )
+            )}
             </div>
-        )}
+        </div>
       </div>
 
       <SettingsModal isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} settings={settings} onUpdateSettings={setSettings} />
       <StediModal isOpen={isStediOpen} onClose={() => setIsStediOpen(false)} activeFileContent={activeFile?.content || ''} />
+      <SaveAsModal isOpen={isSaveAsModalOpen} onClose={() => setIsSaveAsModalOpen(false)} currentName={activeFile?.name || ''} onSave={handleDownloadFile} />
       <LiveVoiceAgent isOpen={isVoiceAgentOpen} onClose={() => setIsVoiceAgentOpen(false)} files={chatContextFiles} hasApiKey={hasApiKey && settings.aiProvider === 'gemini'} />
       <AuthModal isOpen={isAuthModalOpen} onClose={() => setIsAuthModalOpen(false)} />
       

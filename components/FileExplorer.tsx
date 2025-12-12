@@ -61,7 +61,7 @@ const FileExplorer: React.FC<FileExplorerProps> = ({
   };
 
   return (
-    <div className="h-full flex flex-col text-slate-400 w-[260px] min-w-[260px]">
+    <div className="h-full flex flex-col text-slate-400 w-full">
       {/* Header - Aligned to h-10 to match Editor Toolbar */}
       <div className="h-10 flex items-center justify-between px-4 border-b border-white/5 bg-slate-900/50 backdrop-blur-sm flex-none">
         <span className="text-xs font-bold uppercase tracking-wider text-slate-500">Explorer</span>

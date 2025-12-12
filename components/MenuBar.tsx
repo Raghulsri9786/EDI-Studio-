@@ -4,7 +4,7 @@ import {
   FilePlus, FolderOpen, Save, FileJson, FileCode, X, 
   Undo, Redo, Copy, Scissors, Clipboard, Search, Replace, AlignLeft, Minimize2,
   Sidebar, MessageSquare, Maximize2, Map, GitCompare, Activity,
-  BrainCircuit, Sparkles, MessageCircle, HelpCircle, Keyboard, Info, BookOpen
+  BrainCircuit, Sparkles, MessageCircle, Keyboard, Info, BookOpen, Download
 } from 'lucide-react';
 
 interface MenuBarProps {
@@ -21,6 +21,8 @@ const MenuBar: React.FC<MenuBarProps> = ({ onAction }) => {
       { id: 'open_file', label: 'Open File...', icon: <FolderOpen size={14} />, shortcut: 'Ctrl+O' },
       { type: 'separator' },
       { id: 'save_file', label: 'Save', icon: <Save size={14} />, shortcut: 'Ctrl+S' },
+      { id: 'save_as', label: 'Save As...', icon: <Download size={14} />, shortcut: 'Ctrl+Shift+S' },
+      { type: 'separator' },
       { id: 'export_json', label: 'Export to JSON', icon: <FileJson size={14} /> },
       { id: 'export_xml', label: 'Export to XML', icon: <FileCode size={14} /> },
       { type: 'separator' },
@@ -90,11 +92,15 @@ const MenuBar: React.FC<MenuBarProps> = ({ onAction }) => {
   };
 
   return (
-    <div ref={menuRef} className="flex items-center px-2 bg-slate-900 border-b border-white/5 text-xs select-none relative z-50 h-8">
+    <div ref={menuRef} className="flex items-center text-[13px] select-none h-full relative">
       {Object.entries(menus).map(([name, items]) => (
-        <div key={name} className="relative">
+        <div key={name} className="relative h-full flex items-center">
           <button
-            className={`px-3 py-1.5 rounded hover:bg-white/10 transition-colors ${activeMenu === name ? 'bg-white/10 text-white' : 'text-slate-300'}`}
+            className={`px-3 py-1 rounded-md transition-colors h-[28px] flex items-center ${
+              activeMenu === name 
+                ? 'bg-white/10 text-white' 
+                : 'text-slate-400 hover:text-slate-200 hover:bg-white/5'
+            }`}
             onClick={() => handleMenuClick(name)}
             onMouseEnter={() => handleHover(name)}
           >
@@ -102,7 +108,7 @@ const MenuBar: React.FC<MenuBarProps> = ({ onAction }) => {
           </button>
 
           {activeMenu === name && (
-            <div className="absolute top-full left-0 w-56 bg-[#1e293b] border border-white/10 rounded-b-lg rounded-r-lg shadow-2xl py-1 animate-in fade-in zoom-in-95 duration-100 origin-top-left">
+            <div className="absolute top-full left-0 mt-1 w-60 bg-[#1e293b] border border-white/10 rounded-lg shadow-2xl py-1 z-50 overflow-hidden ring-1 ring-black/20 animate-in fade-in zoom-in-95 duration-100 origin-top-left">
               {items.map((item, idx) => {
                 if ('type' in item && item.type === 'separator') {
                   return <div key={idx} className="h-px bg-white/10 my-1 mx-2" />;
@@ -112,14 +118,14 @@ const MenuBar: React.FC<MenuBarProps> = ({ onAction }) => {
                   <button
                     key={action.id}
                     onClick={() => executeAction(action.id)}
-                    className="w-full text-left px-3 py-1.5 hover:bg-blue-600 hover:text-white flex items-center justify-between group"
+                    className="w-full text-left px-3 py-2 hover:bg-blue-600 hover:text-white flex items-center justify-between group transition-colors"
                   >
-                    <div className="flex items-center gap-2 text-slate-300 group-hover:text-white">
+                    <div className="flex items-center gap-2.5 text-slate-300 group-hover:text-white">
                       <span className="opacity-70 group-hover:opacity-100">{action.icon}</span>
-                      <span>{action.label}</span>
+                      <span className="text-sm">{action.label}</span>
                     </div>
                     {action.shortcut && (
-                      <span className="text-[10px] text-slate-500 group-hover:text-blue-100 font-mono ml-4">
+                      <span className="text-[10px] text-slate-500 group-hover:text-blue-100 font-mono ml-4 opacity-70">
                         {action.shortcut}
                       </span>
                     )}

@@ -22,30 +22,48 @@ export const parseEdiToLines = (content: string): ParsedLine[] => {
   }
 
   // 2. Split Content
-  // We handle splitting by the detected terminator.
+  // FIX: Don't aggressively strip newlines.
+  // If the user has formatted the file with newlines, assume they want line-based parsing
+  // even if the segments are incomplete or missing terminators.
   let rawSegments: string[] = [];
+  const hasNewlines = content.includes('\n');
   
-  // If the terminator is a newline, split by it.
-  if (terminator === '\n' || terminator === '\r\n') {
-      rawSegments = content.split(/\r?\n/).filter(s => s.trim().length > 0);
+  if (hasNewlines) {
+      // PRESERVATION MODE: Split by visual line first.
+      // This ensures incomplete segments like "REF*AN" stay on their own line
+      // and don't get merged with the next line.
+      rawSegments = content.split(/\r?\n/);
+      // Filter out empty lines ONLY if they are truly empty, but keep lines with whitespace 
+      // if they might be meaningful (though usually trimming is safer for display)
+      // Actually, for editor fidelity, we should keep everything, but for *Parsing* logic
+      // we usually want semantic lines. Let's filter purely empty lines to avoid noise.
+      rawSegments = rawSegments.filter(s => s.trim().length > 0);
   } else {
-      // Split by character terminator (e.g. ~ or ')
-      // Clean up newlines that might be used for display formatting between segments
-      const cleanStream = content.replace(/[\r\n]+/g, ''); 
-      rawSegments = cleanStream.split(terminator)
-        .map(s => s.trim())
-        .filter(s => s.length > 0)
-        .map(s => s + terminator); // Add terminator back for display
+      // RAW STREAM MODE: Split by terminator.
+      // This is for files that come in as a single long string.
+      // We clean up newlines that might be artifacts if they aren't the terminator.
+      if (terminator !== '\n' && terminator !== '\r\n') {
+          const cleanStream = content.replace(/[\r\n]+/g, ''); 
+          rawSegments = cleanStream.split(terminator)
+            .map(s => s.trim())
+            .filter(s => s.length > 0)
+            .map(s => s + terminator); // Add terminator back for visual consistency
+      } else {
+          rawSegments = content.split(/\r?\n/).filter(s => s.trim().length > 0);
+      }
   }
 
   const lines: ParsedLine[] = [];
   const loopStack: { id: string; startLine: number }[] = [];
 
   rawSegments.forEach((raw, idx) => {
-    // Remove terminator for parsing logic
-    let cleanRaw = raw;
-    if (raw.endsWith(terminator)) {
-        cleanRaw = raw.substring(0, raw.length - terminator.length).trim();
+    // Clean up terminator for tokenization, but keep 'raw' intact for display if needed?
+    // Actually, 'raw' in ParsedLine is used for display. 
+    // If we split by newline, 'raw' is the line content.
+    
+    let cleanRaw = raw.trim();
+    if (cleanRaw.endsWith(terminator) && terminator !== '\n' && terminator !== '\r\n') {
+        cleanRaw = cleanRaw.substring(0, cleanRaw.length - terminator.length).trim();
     }
     
     // Split by Element Separator
@@ -88,7 +106,8 @@ export const parseEdiToLines = (content: string): ParsedLine[] => {
     }
 
     // Add Terminator Token (Visual)
-    if (terminator !== '\n' && terminator !== '\r\n') {
+    // Only add if it was present in the original split or inferred
+    if (raw.trim().endsWith(terminator) && terminator !== '\n' && terminator !== '\r\n') {
         tokens.push({
             type: 'TERMINATOR',
             value: terminator,
@@ -139,7 +158,7 @@ export const parseEdiToLines = (content: string): ParsedLine[] => {
 
     lines.push({
       lineNumber: idx + 1,
-      raw,
+      raw: raw, // Use original raw including visual terminator
       segmentId,
       indent,
       isLoopStart,

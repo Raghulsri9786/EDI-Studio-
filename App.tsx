@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useRef, useLayoutEffect, useCallback } from 'react';
-import { Activity, GitCompare, Layout, FileCode, Search, Settings, X, MessageSquare, Mic, Database, Cloud, UserCircle, LogOut, FilePlus, FolderOpen, Save, FileJson, BrainCircuit, BookOpen, Download, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, GripVertical } from 'lucide-react';
+import { Activity, GitCompare, Layout, FileCode, Search, Settings, X, MessageSquare, Mic, Database, Cloud, UserCircle, LogOut, FilePlus, FolderOpen, Save, FileJson, BrainCircuit, BookOpen, Download, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, GripVertical, Shield } from 'lucide-react';
 import Editor, { EditorHandle, EditorState } from './components/Editor';
 import EditorToolbar from './components/EditorToolbar';
 import AnalysisPanel from './components/AnalysisPanel';
@@ -15,10 +15,11 @@ import InteractiveBackground from './components/InteractiveBackground';
 import AuthModal from './components/AuthModal';
 import CloudFileManager from './components/CloudFileManager';
 import HumanReadablePanel from './components/HumanReadablePanel';
+import ValidationRulesPanel from './components/ValidationRulesPanel';
 import MenuBar from './components/MenuBar';
 import CommandPalette, { CommandItem } from './components/CommandPalette';
 import SaveAsModal from './components/SaveAsModal';
-import { AppState, AppMode, EdiFile, AppSettings, PanelTab } from './types';
+import { AppState, AppMode, EdiFile, AppSettings, PanelTab, TPRuleSet } from './types';
 import { animatePageEntrance, animatePanelEnter, animatePanelExit } from './utils/gsapAnimations';
 import { storageService } from './services/storageService';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
@@ -44,6 +45,9 @@ function App() {
   const [appState, setAppState] = useState<AppState>(AppState.IDLE);
   const [appMode, setAppMode] = useState<AppMode>(AppMode.EDITOR);
   const [isBusinessView, setIsBusinessView] = useState(false);
+
+  // TP Rules State
+  const [ruleSets, setRuleSets] = useState<TPRuleSet[]>([]);
 
   // Layout State
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
@@ -174,11 +178,39 @@ function App() {
           handleDownloadFile(); // Standard Save
         }
       }
+
+      // Warp/Unwarp (Ctrl+Shift+W)
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'w') {
+         e.preventDefault();
+         if (activeFile?.content.includes('\n')) {
+             editorRef.current?.warp();
+         } else {
+             editorRef.current?.unwarp();
+         }
+      }
+
+      // Validate (Ctrl+Shift+V)
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'v') {
+         e.preventDefault();
+         if (!isRightPanelOpen || activeRightTab !== 'validate') {
+             toggleRightPanel('validate');
+         }
+      }
+
+      // Jump Errors (F8 / Shift+F8)
+      if (e.key === 'F8') {
+         e.preventDefault();
+         if (e.shiftKey) {
+             editorRef.current?.jumpToPrevError();
+         } else {
+             editorRef.current?.jumpToNextError();
+         }
+      }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [activeFileId]);
+  }, [activeFileId, activeFile]); // Added activeFile dependency to access content for toggle logic
 
   // Initialize Settings & Data
   useEffect(() => {
@@ -189,6 +221,14 @@ function App() {
         try {
           setSettings({ ...settings, ...JSON.parse(savedSettings) });
         } catch (e) {}
+      }
+
+      // Load Rules from Local
+      const savedRules = localStorage.getItem('edi_rules');
+      if (savedRules) {
+          try {
+              setRuleSets(JSON.parse(savedRules));
+          } catch (e) {}
       }
 
       // Load Files from IndexedDB (Local First)
@@ -233,6 +273,11 @@ function App() {
       return () => clearTimeout(timer);
     }
   }, [settings, user]);
+
+  // Save Rules on Change
+  useEffect(() => {
+      localStorage.setItem('edi_rules', JSON.stringify(ruleSets));
+  }, [ruleSets]);
 
   // Entrance Animation
   useLayoutEffect(() => {
@@ -292,8 +337,18 @@ function App() {
     const readers = Array.from(fileList).map((file: File) => {
       return new Promise<EdiFile>((resolve) => {
         const reader = new FileReader();
+        const isPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
+        
         reader.onload = (e) => {
-          const content = e.target?.result as string;
+          let content = e.target?.result as string;
+          
+          if (isPdf && typeof content === 'string') {
+             // Extract pure base64 for API usage if it's a data URL
+             if (content.startsWith('data:')) {
+                 content = content.split(',')[1];
+             }
+          }
+
           const id = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : Date.now().toString() + Math.random().toString(36).substr(2, 9);
           
           resolve({
@@ -301,9 +356,15 @@ function App() {
             name: file.name,
             content: content,
             lastModified: new Date(file.lastModified),
+            mimeType: isPdf ? 'application/pdf' : 'text/plain'
           });
         };
-        reader.readAsText(file);
+
+        if (isPdf) {
+            reader.readAsDataURL(file); // Read as Base64 for PDFs
+        } else {
+            reader.readAsText(file); // Read as Text for EDI/Code
+        }
       });
     });
 
@@ -335,6 +396,7 @@ function App() {
       name: `Untitled-${files.length + 1}.edi`,
       content: "",
       lastModified: new Date(),
+      mimeType: 'text/plain'
     };
     setFiles(prev => [...prev, newFile]);
     storageService.saveFile(newFile);
@@ -350,6 +412,7 @@ function App() {
       name: d.name,
       content: d.content,
       lastModified: new Date(),
+      mimeType: 'text/plain'
     }));
     
     storageService.saveAllFiles(newFiles);
@@ -440,7 +503,8 @@ function App() {
       content: '', 
       lastModified: new Date(),
       isCompareView: true,
-      compareData: { files: [...selectedFiles] }
+      compareData: { files: [...selectedFiles] },
+      mimeType: 'text/plain'
     };
     // Compare views are transient, add to files state but usually not storage unless saved
     setFiles(prev => [...prev, compareFile]);
@@ -466,6 +530,13 @@ function App() {
 
   const handleCloudFileSaved = (localId: string, cloudId: string) => {
     setFiles(prev => prev.map(f => f.id === localId ? { ...f, cloudId, isSynced: true } : f));
+  };
+
+  // Jump to specific line in editor
+  const handleJumpToLine = (line: number) => {
+    if (editorRef.current) {
+        editorRef.current.scrollToLine(line);
+    }
   };
 
   // Command Execution Handler
@@ -509,12 +580,12 @@ function App() {
     { id: 'save_as', label: 'Save As...', category: 'File', shortcut: 'Ctrl+Shift+S', icon: <Download size={14} /> },
     { id: 'open_file', label: 'Open File', category: 'File', shortcut: 'Ctrl+O', icon: <FolderOpen size={14} /> },
     { id: 'export_json', label: 'Export to JSON', category: 'File', icon: <FileJson size={14} /> },
-    { id: 'validate', label: 'Validate EDI Structure', category: 'Tools', icon: <Activity size={14} /> },
+    { id: 'validate', label: 'Validate EDI Structure', category: 'Tools', shortcut: 'Ctrl+Shift+V', icon: <Activity size={14} /> },
     { id: 'ai_studio', label: 'Open AI Studio', category: 'AI', icon: <BrainCircuit size={14} /> },
     { id: 'toggle_business', label: 'Generate Business View', category: 'View', icon: <BookOpen size={14} /> },
     { id: 'toggle_sidebar', label: 'Toggle Sidebar', category: 'View', shortcut: 'Ctrl+B' },
-    { id: 'warp', label: 'Format: Warp (Single Line)', category: 'Edit' },
-    { id: 'unwarp', label: 'Format: Unwarp (Pretty Print)', category: 'Edit' },
+    { id: 'warp', label: 'Format: Warp (Single Line)', category: 'Edit', shortcut: 'Ctrl+Shift+W' },
+    { id: 'unwarp', label: 'Format: Unwarp (Pretty Print)', category: 'Edit', shortcut: 'Ctrl+Shift+W' },
     { id: 'find', label: 'Find & Replace', category: 'Edit', shortcut: 'Ctrl+F' },
     { id: 'mapper', label: 'Switch to Mapper', category: 'Tools' },
   ];
@@ -763,16 +834,37 @@ function App() {
             }}
         >
             <div className="flex items-center justify-between px-4 py-3 bg-slate-900/50 border-b border-white/5 flex-none">
-            <span className="text-xs font-bold uppercase tracking-wider text-slate-400 flex items-center gap-2">
-                {activeRightTab === 'chat' && <MessageSquare size={14} className="text-blue-400" />}
-                {activeRightTab === 'validate' && <Activity size={14} className="text-emerald-400" />}
-                {activeRightTab === 'tools' && <Cloud size={14} className="text-blue-400" />}
-                {activeRightTab === 'chat' ? 'AI Assistant' : activeRightTab === 'validate' ? 'Validation Health' : 'Cloud Files'}
-            </span>
+            {/* Header Tabs: If in chat or validate mode, show a tab switcher. Otherwise show static title. */}
+            {(activeRightTab === 'chat' || activeRightTab === 'validate' || activeRightTab === 'rules') ? (
+               <div className="flex bg-slate-800 rounded-lg p-0.5 border border-white/5">
+                  <button 
+                    onClick={() => setActiveRightTab('chat')} 
+                    className={`flex items-center gap-2 px-3 py-1.5 text-xs font-medium rounded-md transition-all ${activeRightTab === 'chat' ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-400 hover:text-white hover:bg-white/5'}`}
+                  >
+                    <MessageSquare size={12} /> Assistant
+                  </button>
+                  <button 
+                    onClick={() => setActiveRightTab('validate')} 
+                    className={`flex items-center gap-2 px-3 py-1.5 text-xs font-medium rounded-md transition-all ${activeRightTab === 'validate' ? 'bg-emerald-600 text-white shadow-sm' : 'text-slate-400 hover:text-white hover:bg-white/5'}`}
+                  >
+                    <Activity size={12} /> Validation
+                  </button>
+                  <button 
+                    onClick={() => setActiveRightTab('rules')} 
+                    className={`flex items-center gap-2 px-3 py-1.5 text-xs font-medium rounded-md transition-all ${activeRightTab === 'rules' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-400 hover:text-white hover:bg-white/5'}`}
+                  >
+                    <Shield size={12} /> Rules
+                  </button>
+               </div>
+            ) : (
+                <span className="text-xs font-bold uppercase tracking-wider text-slate-400 flex items-center gap-2">
+                    {activeRightTab === 'tools' && <Cloud size={14} className="text-blue-400" />}
+                    {activeRightTab === 'json' && <FileJson size={14} className="text-amber-400" />}
+                    {activeRightTab === 'tools' ? 'Cloud Files' : 'JSON Output'}
+                </span>
+            )}
+
             <div className="flex items-center gap-2">
-                {activeRightTab !== 'validate' && activeRightTab !== 'chat' && (
-                    <button onClick={() => toggleRightPanel('validate')} title="Validation" className="p-1 text-slate-500 hover:text-emerald-400 transition-colors"><Activity size={14} /></button>
-                )}
                 <button onClick={handleCloseRightPanel} className="p-1.5 text-slate-500 hover:text-white hover:bg-white/10 rounded-lg transition-colors"><X size={16} /></button>
             </div>
             </div>
@@ -790,6 +882,13 @@ function App() {
                     onSplitFiles={handleSplitFiles}
                     onStediClick={() => setIsStediOpen(true)}
                     hasApiKey={hasApiKey}
+                    onJumpToLine={handleJumpToLine}
+                    />
+                ) : activeRightTab === 'rules' ? (
+                    <ValidationRulesPanel 
+                        ruleSets={ruleSets} 
+                        onUpdateRuleSets={setRuleSets} 
+                        onClose={handleCloseRightPanel}
                     />
                 ) : (
                     <CloudFileManager 

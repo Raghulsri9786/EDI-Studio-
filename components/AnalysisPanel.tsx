@@ -2,7 +2,7 @@
 import React, { useState, useRef, useEffect, useLayoutEffect } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { Send, Bot, User, Loader2, AlertTriangle, CheckCircle, AlertOctagon, BrainCircuit, Globe, Layers, Sparkles, Wand2, Lock, Key, Image, Download, Film, ChevronDown, ChevronUp, Link as LinkIcon, Maximize, X, MessageCircle } from 'lucide-react';
-import { EdiAnalysisResult, ChatMessage, ValidationResult, EdiFile, PanelTab, OrchestratedResult } from '../types';
+import { EdiAnalysisResult, ChatMessage, ValidationResult, EdiFile, PanelTab, OrchestratedResult, TPRuleSet } from '../types';
 import { sendEdiChat, generateEdiFlowImage, generateEdiFlowVideo } from '../services/geminiService';
 import { validationOrchestrator } from '../services/validationOrchestrator';
 import JsonPanel from './JsonPanel';
@@ -22,6 +22,7 @@ interface AnalysisPanelProps {
   onStediClick?: () => void;
   hasApiKey?: boolean;
   isFullScreen?: boolean;
+  onJumpToLine?: (line: number) => void;
 }
 
 type ChatMode = 'standard' | 'thinking' | 'search' | 'image' | 'video';
@@ -37,7 +38,8 @@ const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
   onStediClick,
   hasApiKey = false,
   onClose,
-  isFullScreen = false
+  isFullScreen = false,
+  onJumpToLine
 }) => {
   const [chatInput, setChatInput] = useState('');
   const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]);
@@ -136,8 +138,8 @@ const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
           setChatMode('standard'); 
       }
       else {
-          const contextString = contextFiles.map(f => `=== FILE: ${f.name} ===\n${f.content}\n`).join('\n');
-          const response = await sendEdiChat(chatHistory, text, contextString, {
+          // Pass the contextFiles array directly to support binary content (PDFs)
+          const response = await sendEdiChat(chatHistory, text, contextFiles, {
             useThinking: chatMode === 'thinking',
             useSearch: chatMode === 'search'
           });
@@ -182,11 +184,15 @@ const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
     try {
       const savedStedi = localStorage.getItem('stedi_config');
       const stediConfig = savedStedi ? JSON.parse(savedStedi) : undefined;
+      
+      const savedRules = localStorage.getItem('edi_rules');
+      const activeRuleSets: TPRuleSet[] = savedRules ? JSON.parse(savedRules) : [];
 
       const res = await validationOrchestrator.validate(activeFileContent, {
           useAi: hasApiKey || false,
           useStedi: !!stediConfig,
-          stediConfig
+          stediConfig,
+          activeRuleSets
       });
       setOrchestratedResult(res);
     } finally {
@@ -194,11 +200,31 @@ const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
     }
   };
 
+  const handleApplyFix = (line: number, newSegment: string) => {
+      // Create new content by replacing the line
+      // Note: line is 1-based, array is 0-based
+      const lines = activeFileContent.split(/\r?\n/);
+      if (line > 0 && line <= lines.length) {
+          lines[line - 1] = newSegment;
+          const newContent = lines.join('\n');
+          onUpdateContent(newContent);
+          // Re-run validation to clear the error
+          // We can't immediately re-run here as content update is async propagation, 
+          // but useEffect below handles it when content changes.
+      }
+  };
+
+  // Reset validation result when content changes so user sees fresh state
+  useEffect(() => {
+    setOrchestratedResult(null);
+  }, [activeFileContent]);
+
+  // Auto-run validation if tab is active and no result exists
   useEffect(() => {
     if (activeTab === 'validate' && !orchestratedResult && activeFileContent) {
       runValidation();
     }
-  }, [activeTab]);
+  }, [activeTab, orchestratedResult, activeFileContent]);
 
   if (loading) {
     return (
@@ -300,12 +326,18 @@ const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
                 <div className="text-center text-slate-500 mt-10">No EDI content to validate.</div>
              ) : (
                 <>
-                   <HealthDashboard result={orchestratedResult} isValidating={validating} />
+                   <HealthDashboard 
+                      result={orchestratedResult} 
+                      isValidating={validating} 
+                      activeFileContent={activeFileContent}
+                      onJumpToLine={onJumpToLine} 
+                      onApplyFix={handleApplyFix}
+                   />
                    {!validating && (
-                      <div className="mt-6 px-2">
+                      <div className="mt-6 px-2 pb-6">
                          <button 
                            onClick={runValidation} 
-                           className="w-full py-3 text-sm font-semibold text-blue-400 bg-blue-500/5 hover:bg-blue-500/10 rounded-xl transition-all border border-blue-500/20 hover:border-blue-500/40"
+                           className="w-full py-3 text-sm font-semibold text-blue-400 bg-blue-500/5 hover:bg-blue-500/10 rounded-xl transition-all border border-blue-500/20 hover:border-blue-500/40 shadow-lg shadow-blue-900/20"
                          >
                            Re-run Validation
                          </button>
@@ -387,7 +419,7 @@ const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
                       
                       {msg.sources && msg.sources.length > 0 && (
                         <div className="mt-4 pt-3 border-t border-white/10">
-                           <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2 flex items-center gap-1">
+                           <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2 flex items-center gap-1.5">
                               <Globe size={10} /> Sources
                            </div>
                            <div className="grid gap-1">

@@ -1,16 +1,31 @@
 
-import React, { useLayoutEffect, useRef } from 'react';
-import { Activity, AlertTriangle, CheckCircle, AlertOctagon, ShieldCheck } from 'lucide-react';
-import { OrchestratedResult } from '../types';
+import React, { useLayoutEffect, useRef, useState } from 'react';
+import { Activity, AlertTriangle, CheckCircle, AlertOctagon, ShieldCheck, ArrowUpRight, Sparkles, Loader2, ArrowRight } from 'lucide-react';
+import { OrchestratedResult, ValidationIssue, FixResult } from '../types';
+import { generateEdiFix, hasValidApiKey } from '../services/geminiService';
 
 interface HealthDashboardProps {
   result: OrchestratedResult | null;
   isValidating: boolean;
+  activeFileContent?: string;
+  onJumpToLine?: (line: number) => void;
+  onApplyFix?: (line: number, newSegment: string) => void;
 }
 
-const HealthDashboard: React.FC<HealthDashboardProps> = ({ result, isValidating }) => {
+const HealthDashboard: React.FC<HealthDashboardProps> = ({ 
+  result, 
+  isValidating, 
+  activeFileContent = '', 
+  onJumpToLine, 
+  onApplyFix 
+}) => {
   const scoreRef = useRef<HTMLDivElement>(null);
   const barRef = useRef<HTMLDivElement>(null);
+  
+  // Fix State
+  const [fixingIssueIndex, setFixingIssueIndex] = useState<number | null>(null);
+  const [fixResult, setFixResult] = useState<FixResult | null>(null);
+  const [isGeneratingFix, setIsGeneratingFix] = useState(false);
 
   useLayoutEffect(() => {
     if (result && scoreRef.current && window.gsap) {
@@ -35,6 +50,48 @@ const HealthDashboard: React.FC<HealthDashboardProps> = ({ result, isValidating 
     }
   }, [result]);
 
+  const handleFixClick = async (idx: number, issue: ValidationIssue) => {
+    if (!activeFileContent || !issue.line) return;
+    
+    // Toggle off if clicking same
+    if (fixingIssueIndex === idx) {
+        setFixingIssueIndex(null);
+        setFixResult(null);
+        return;
+    }
+
+    setFixingIssueIndex(idx);
+    setIsGeneratingFix(true);
+    setFixResult(null);
+
+    try {
+        // Extract context lines
+        const lines = activeFileContent.split(/\r?\n/);
+        const lineIndex = issue.line - 1;
+        const segment = lines[lineIndex];
+        
+        // Context: 5 lines before and after
+        const start = Math.max(0, lineIndex - 5);
+        const end = Math.min(lines.length, lineIndex + 5);
+        const context = lines.slice(start, end).join('\n');
+
+        const fix = await generateEdiFix(segment, issue.message, context);
+        setFixResult(fix);
+    } catch (e) {
+        console.error(e);
+    } finally {
+        setIsGeneratingFix(false);
+    }
+  };
+
+  const handleApply = (line: number, newSegment: string) => {
+      if (onApplyFix) {
+          onApplyFix(line, newSegment);
+          setFixingIssueIndex(null);
+          setFixResult(null);
+      }
+  };
+
   if (isValidating) {
     return (
       <div className="p-6 bg-slate-900/50 rounded-xl border border-white/5 animate-pulse flex flex-col items-center justify-center h-48">
@@ -57,6 +114,8 @@ const HealthDashboard: React.FC<HealthDashboardProps> = ({ result, isValidating 
     if (s >= 70) return 'bg-amber-500';
     return 'bg-red-500';
   };
+
+  const canUseAi = hasValidApiKey();
 
   return (
     <div className="space-y-6">
@@ -134,20 +193,75 @@ const HealthDashboard: React.FC<HealthDashboardProps> = ({ result, isValidating 
             <div className="p-4 text-center text-slate-500 text-xs italic bg-slate-800/30 rounded-lg">No issues detected.</div>
          ) : (
             result.issues.filter(i => i.severity !== 'INFO').map((issue, idx) => (
-               <div key={idx} className={`p-3 rounded-lg border flex gap-3 text-xs ${issue.severity === 'ERROR' ? 'bg-red-900/10 border-red-500/20 text-red-200' : 'bg-amber-900/10 border-amber-500/20 text-amber-200'}`}>
-                  <div className={`mt-0.5 flex-none ${issue.severity === 'ERROR' ? 'text-red-500' : 'text-amber-500'}`}>
-                     {issue.severity === 'ERROR' ? <AlertOctagon size={14} /> : <AlertTriangle size={14} />}
+               <div key={idx} className={`p-3 rounded-lg border text-xs transition-all ${issue.severity === 'ERROR' ? 'bg-red-900/10 border-red-500/20' : 'bg-amber-900/10 border-amber-500/20'}`}>
+                  <div className="flex gap-3">
+                    <div className={`mt-0.5 flex-none ${issue.severity === 'ERROR' ? 'text-red-500' : 'text-amber-500'}`}>
+                        {issue.severity === 'ERROR' ? <AlertOctagon size={14} /> : <AlertTriangle size={14} />}
+                    </div>
+                    <div className="flex-1">
+                        <div className="font-semibold mb-0.5 flex justify-between items-start">
+                            <span className={`${issue.severity === 'ERROR' ? 'text-red-200' : 'text-amber-200'}`}>{issue.message}</span>
+                            <div className="flex items-center gap-1">
+                                {issue.severity === 'ERROR' && canUseAi && issue.line && (
+                                    <button
+                                        onClick={() => handleFixClick(idx, issue)}
+                                        className={`flex items-center gap-1 text-[10px] px-2 py-0.5 rounded border transition-all ${
+                                            fixingIssueIndex === idx 
+                                            ? 'bg-blue-600 text-white border-blue-500 shadow-md' 
+                                            : 'bg-slate-800 text-blue-400 border-blue-500/30 hover:border-blue-400'
+                                        }`}
+                                    >
+                                        <Sparkles size={10} /> Fix
+                                    </button>
+                                )}
+                                {issue.line && (
+                                    <button 
+                                        onClick={() => onJumpToLine && onJumpToLine(issue.line!)}
+                                        className="flex items-center gap-1 text-[10px] opacity-60 font-mono bg-white/10 px-1.5 py-0.5 rounded hover:bg-white/20 hover:opacity-100 transition-all cursor-pointer"
+                                        title="Jump to line"
+                                    >
+                                        Ln {issue.line} <ArrowUpRight size={10} />
+                                    </button>
+                                )}
+                            </div>
+                        </div>
+                        <div className="flex items-center gap-2 mt-1 opacity-60">
+                            <span className="bg-black/20 px-1.5 py-0.5 rounded text-[10px] text-slate-300">{issue.source}</span>
+                            {issue.code && <span className="text-slate-400">Code: {issue.code}</span>}
+                        </div>
+                    </div>
                   </div>
-                  <div className="flex-1">
-                     <div className="font-semibold mb-0.5 flex justify-between">
-                        <span>{issue.message}</span>
-                        {issue.line && <span className="text-[10px] opacity-60 font-mono">Ln {issue.line}</span>}
-                     </div>
-                     <div className="flex items-center gap-2 mt-1 opacity-60">
-                        <span className="bg-black/20 px-1.5 py-0.5 rounded text-[10px]">{issue.source}</span>
-                        {issue.code && <span>Code: {issue.code}</span>}
-                     </div>
-                  </div>
+
+                  {/* Fix Panel Expansion */}
+                  {fixingIssueIndex === idx && (
+                      <div className="mt-3 pt-3 border-t border-white/5 animate-in slide-in-from-top-1">
+                          {isGeneratingFix ? (
+                              <div className="flex items-center justify-center py-4 text-blue-400 gap-2">
+                                  <Loader2 size={14} className="animate-spin" />
+                                  <span>Analyzing segment rules...</span>
+                              </div>
+                          ) : fixResult ? (
+                              <div className="space-y-3">
+                                  <div className="text-slate-300 font-medium">Proposed Fix:</div>
+                                  <div className="bg-black/40 p-2 rounded font-mono text-[11px] text-emerald-300 border border-emerald-500/30 flex items-center justify-between">
+                                      <span>{fixResult.segment}</span>
+                                      <button 
+                                        onClick={() => handleApply(issue.line!, fixResult.segment)}
+                                        className="ml-4 px-3 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-[10px] font-bold transition-colors shadow-sm"
+                                      >
+                                        Apply
+                                      </button>
+                                  </div>
+                                  <div className="flex items-start gap-2 bg-blue-500/10 p-2 rounded text-blue-200">
+                                      <div className="mt-0.5"><Sparkles size={12} /></div>
+                                      <p>{fixResult.explanation}</p>
+                                  </div>
+                              </div>
+                          ) : (
+                              <div className="text-center py-2 text-slate-500 italic">Could not generate a fix.</div>
+                          )}
+                      </div>
+                  )}
                </div>
             ))
          )}

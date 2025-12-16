@@ -1,6 +1,6 @@
 
 import { GoogleGenAI, GenerateContentResponse } from "@google/genai";
-import { ChatMessage, EdiAnalysisResult, ValidationResult, EdiFile, AppSettings } from '../types';
+import { ChatMessage, EdiAnalysisResult, ValidationResult, EdiFile, AppSettings, FixResult, TPRule, LineError } from '../types';
 
 const GEMINI_PRO = 'gemini-3-pro-preview';
 const GEMINI_FLASH = 'gemini-2.5-flash';
@@ -19,13 +19,10 @@ You are a professional assistant that only talks about:
 - Trading partner (TP) flows
 - Supply chain documents and logistics processes
 
-If the user asks anything outside EDI / ERP / integration, reply:
-"I’m focused only on EDI, ERP, and integration topics. Please ask about those."
-
 UI layout context
 -----------------
 The app has three main areas:
-1) Editor      → text view of the EDI file
+1) Editor      → text view of the EDI file (or PDF viewer)
 2) Mapper      → visual mapping to JSON/ERP fields
 3) AI Space    → a web-style panel with Chat, Image/Video generation.
 
@@ -45,7 +42,8 @@ Answer style
 
 Chat behavior
 -------------
-- You always have access to the "current EDI file" context if the user is editing a document.
+- You have access to the context files provided in the chat.
+- If a PDF is provided, READ IT CAREFULLY. It usually contains Trading Partner specifications or guides.
 - When the user selects or mentions a segment (e.g., BEG, N1*ST, PO1, REF, G62), explain what it is for, validation rules, and business meaning.
 - For mapping questions, suggest concrete mappings (e.g., BEG03 → target.PurchaseOrderNumber).
 
@@ -78,6 +76,115 @@ Content limitations
 - Stay within EDI, ERP and related business-process topics.
 - Do not output general web chit-chat.
 - For real company names, use plain text only.
+`;
+
+const SYSTEM_INSTRUCTION_FIXER = `
+You are the Inline EDI Validation Engine.  
+When validating an X12 file, you MUST NOT change the formatting, spacing, alignment, 
+or visual structure of the original file in any way.
+
+Your job is ONLY:
+1. Identify the exact line where the error occurs.
+2. Identify the exact element inside the segment that is incorrect.
+3. Provide a structured error object for the frontend to render a ❌ marker.
+4. Provide a fix suggestion, but NEVER modify the user's file automatically.
+5. NEVER auto-format the EDI text. NEVER break lines. NEVER re-indent segments.
+
+VERY IMPORTANT:
+- The EDI editor must display the file EXACTLY as the user typed it.
+- Validation must highlight errors WITHOUT altering the raw EDI text.
+- Fix suggestions must be provided as separate text, not applied automatically.
+
+For each error return:
+{
+  "line": <line number>,
+  "segment": "<segment ID>",
+  "element": "<element ID>",
+  "message": "<short human-readable message>",
+  "reason": "<why this violates X12 or TP rules>",
+  "fix": "<corrected full segment>",
+  "explanation": "<short explanation>",
+  "range": { "start": <index>, "end": <index> }
+}
+
+Rules:
+- Do NOT change spacing or alignment inside segments.
+- Do NOT rewrap segments into multiple lines.
+- Do NOT merge or split segments.
+- Do NOT guess missing data.
+- If the line is truncated or incomplete (e.g., 'REF*AN'), 
+  report the error but do NOT try to auto-fix unless safe.
+
+Example error output:
+{
+  "line": 14,
+  "segment": "REF",
+  "element": "02",
+  "message": "Missing Reference Identification value.",
+  "reason": "REF02 is required when REF01='AN'.",
+  "fix": "REF*AN*XXXX~",
+  "explanation": "Added placeholder value since REF02 is mandatory.",
+  "range": { "start": 7, "end": 7 }
+}
+
+If the file is correct, return an empty array [].
+`;
+
+const SYSTEM_INSTRUCTION_VALIDATOR = `
+You are the Full X12 Validation + Auto-Fix Engine for EDI Insight.
+
+Your job is to validate EVERY segment and EVERY element in the X12 file.  
+You must detect ALL violations of:
+• X12 standard rules  
+• Minimum/maximum length  
+• Datatype (AN, ID, N0, R, DT, TM)  
+• Required element rules  
+• Required segment rules  
+• Segment sequence  
+• Loop structure  
+• Code set restrictions  
+• Conditional rules (“If X present, Y required”)  
+
+You must ALWAYS return a complete list of errors for the entire file.
+
+### Output Format (required for every error):
+{
+  "line": <line number>,
+  "segment": "<segment ID>",
+  "element": "<element ID or null>",
+  "message": "<short error explanation>",
+  "reason": "<short explanation why this breaks X12 rule>",
+  "fix": "<corrected version of full segment or null>",
+  "explanation": "<explain the fix in 1 short sentence>",
+  "range": { "start": <index>, "end": <index> }
+}
+
+### Auto-Fix Rules:
+- ALWAYS attempt a fix if the rule violation can be corrected safely.
+- Fix MUST be returned instantly, not delayed.
+- Only change the invalid element; do NOT alter valid elements.
+- Fix must use the same delimiter style.
+- If value exceeds max length, trim it safely.
+- If missing but required, insert placeholder: "XXXX".
+- If an invalid code appears, choose the closest valid value.
+- If fix is unsafe, return:
+     "fix": null
+     "explanation": "Manual correction required."
+
+### Coverage Requirements:
+- You must validate EVERY FIELD, not only a few fields.
+- ALL elements in ALL segments must be validated.
+- GS02, GS04, ISA06, ISA08, BEG03, DTM02, N101, N104, PO1, SAC… EVERYTHING.
+- Never skip any element.
+
+### Line Mapping:
+- You must always calculate the correct line number.
+- Never skip blank lines.
+- Never reformat the file.
+- Do NOT modify original text—only return error objects.
+
+### When No Errors:
+Return an empty list: []
 `;
 
 // --- Helpers ---
@@ -161,6 +268,44 @@ const isPermissionOrNotFoundError = (error: any): boolean => {
     return false;
 };
 
+/**
+ * Retry utility to handle 429 (Quota Exceeded) and 503 (Server Overload) errors.
+ * Implements exponential backoff.
+ */
+const retryWithBackoff = async <T>(
+  operation: () => Promise<T>, 
+  retries: number = 3, 
+  initialDelay: number = 2000
+): Promise<T> => {
+  let attempt = 0;
+  while (true) {
+    try {
+      return await operation();
+    } catch (error: any) {
+      attempt++;
+      
+      // Determine if we should retry
+      let shouldRetry = false;
+      
+      if (error?.status === 429 || error?.code === 429) shouldRetry = true;
+      if (error?.status === 503 || error?.code === 503) shouldRetry = true;
+      
+      const msg = error?.message || JSON.stringify(error);
+      if (msg.includes('429') || msg.includes('quota') || msg.includes('RESOURCE_EXHAUSTED')) shouldRetry = true;
+      if (msg.includes('503') || msg.includes('Overloaded')) shouldRetry = true;
+
+      if (!shouldRetry || attempt > retries) {
+        throw error;
+      }
+
+      // Exponential backoff
+      const backoffTime = initialDelay * Math.pow(2, attempt - 1);
+      console.warn(`[Gemini] Rate limit/Error hit. Retrying in ${backoffTime}ms (Attempt ${attempt}/${retries})...`);
+      await new Promise(resolve => setTimeout(resolve, backoffTime));
+    }
+  }
+};
+
 // --- DeepSeek Implementation ---
 
 const callDeepSeek = async (
@@ -226,11 +371,11 @@ const generateText = async (prompt: string, systemInstruction?: string): Promise
       const ai = getGeminiClient();
       const modelName = getModelName(settings);
       
-      const response = await ai.models.generateContent({
+      const response = await retryWithBackoff<GenerateContentResponse>(() => ai.models.generateContent({
         model: modelName,
         contents: prompt,
         config: effectiveSystemInstruction ? { systemInstruction: effectiveSystemInstruction } : undefined
-      });
+      }));
       return response.text || "";
     }
   } catch (error: any) {
@@ -239,7 +384,10 @@ const generateText = async (prompt: string, systemInstruction?: string): Promise
     if (error.message.includes("Network connection failed") || error.message.includes("CORS")) {
         throw error;
     }
-    throw new Error("AI Request Failed: " + (error.message || "Unknown error"));
+    // Extract cleaner error if possible
+    let msg = error.message;
+    if (msg.includes('429')) msg = "Quota limit reached. Please try again in a few moments.";
+    throw new Error("AI Request Failed: " + (msg || "Unknown error"));
   }
 };
 
@@ -269,11 +417,11 @@ export const generateEdiFlowImage = async (prompt: string, imageSize: "1K" | "2K
           config.imageConfig = { imageSize: imageSize };
       }
 
-      const response = await ai.models.generateContent({
+      const response = await retryWithBackoff<GenerateContentResponse>(() => ai.models.generateContent({
         model: model,
         contents: { parts: [{ text: enhancedPrompt }] },
         config: Object.keys(config).length > 0 ? config : undefined
-      });
+      }));
       
       if (response.candidates?.[0]?.content?.parts) {
           for (const part of response.candidates[0].content.parts) {
@@ -297,7 +445,11 @@ export const generateEdiFlowImage = async (prompt: string, imageSize: "1K" | "2K
     // Attempt High Quality Model First
     return await performGeneration(apiKey, 'gemini-3-pro-image-preview');
   } catch (error: any) {
-    console.error("Image Gen Error (Pro)", error);
+    if (!isPermissionOrNotFoundError(error)) {
+        console.error("Image Gen Error (Pro)", error);
+    } else {
+        console.warn("Pro model access denied (403/404). Attempting fallback.");
+    }
     
     // Handle 403 Permission Denied or 404 Model Not Found
     if (isPermissionOrNotFoundError(error)) {
@@ -309,7 +461,7 @@ export const generateEdiFlowImage = async (prompt: string, imageSize: "1K" | "2K
                 const newKey = process.env.API_KEY || apiKey;
                 return await performGeneration(newKey, 'gemini-3-pro-image-preview');
             } catch (retryError) {
-                console.warn("Retry with Pro model failed. Attempting fallback.", retryError);
+                console.warn("Retry with Pro model failed or key selection dismissed. Attempting fallback.", retryError);
             }
         }
 
@@ -320,7 +472,8 @@ export const generateEdiFlowImage = async (prompt: string, imageSize: "1K" | "2K
             const fallbackKey = process.env.API_KEY || apiKey;
             return await performGeneration(fallbackKey, 'gemini-2.5-flash-image');
         } catch (flashError: any) {
-            throw new Error("Failed to generate image. Pro model access denied and Flash model failed: " + flashError.message);
+            console.error("Flash fallback failed", flashError);
+            throw new Error("Failed to generate image with both Pro and Flash models. Please check your API key permissions.");
         }
     }
     
@@ -344,7 +497,7 @@ export const generateEdiFlowVideo = async (prompt: string): Promise<string> => {
         High quality, smooth motion, 1080p.
       `;
 
-      let operation = await ai.models.generateVideos({
+      let operation: any = await retryWithBackoff(() => ai.models.generateVideos({
         model: 'veo-3.1-fast-generate-preview',
         prompt: enhancedPrompt,
         config: {
@@ -352,7 +505,7 @@ export const generateEdiFlowVideo = async (prompt: string): Promise<string> => {
           resolution: '1080p',
           aspectRatio: '16:9'
         }
-      });
+      }));
 
       // Poll for completion
       while (!operation.done) {
@@ -398,7 +551,9 @@ export const generateEdiFlowVideo = async (prompt: string): Promise<string> => {
   try {
     return await performGeneration(apiKey);
   } catch (error: any) {
-    console.error("Video Gen Error", error);
+    if (!isPermissionOrNotFoundError(error)) {
+        console.error("Video Gen Error", error);
+    }
     
     // RETRY LOGIC: Handle 404 Not Found (common for Veo access) or 403
     if (isPermissionOrNotFoundError(error) && typeof window !== 'undefined' && (window as any).aistudio) {
@@ -454,29 +609,168 @@ export const analyzeEdiContent = async (ediContent: string): Promise<EdiAnalysis
   }
 };
 
-export const validateEdiContent = async (ediContent: string): Promise<ValidationResult> => {
+export const validateEdiContent = async (ediContent: string): Promise<LineError[]> => {
   const prompt = `
-    Validate the following EDI content. Check for missing segments, invalid structures, or logical errors.
+    Validate the following EDI content using strict X12 rules.
     
     EDI Content:
-    ${ediContent.substring(0, 10000)}
+    ${ediContent.substring(0, 15000)}
 
-    Return ONLY a JSON object with this structure (no markdown):
-    {
-      "isValid": boolean,
-      "errors": ["list of critical errors"],
-      "warnings": ["list of warnings"],
-      "score": number (0-100)
-    }
+    Return ONLY a JSON array of errors matching the specified Output Format.
+    Do not wrap in markdown blocks.
   `;
 
   try {
-    const text = await generateText(prompt);
+    const text = await generateText(prompt, SYSTEM_INSTRUCTION_VALIDATOR);
+    const cleanJson = text.replace(/```json/g, '').replace(/```/g, '').trim();
+    const result = JSON.parse(cleanJson);
+    
+    if (Array.isArray(result)) {
+        return result.map((err: any) => ({
+            line: err.line,
+            code: 'AI_VAL',
+            message: err.message,
+            severity: 'ERROR',
+            tokenIndex: -1, // AI doesn't map exact token index usually
+            fix: err.fix,
+            explanation: err.explanation,
+            reason: err.reason,
+            range: err.range
+        }));
+    }
+    return [];
+  } catch (error: any) {
+    console.error("AI Validation Failed", error);
+    return [];
+  }
+};
+
+export const extractValidationRules = async (specInput: string | { mimeType: string, data: string }): Promise<TPRule[]> => {
+  
+  const instruction = `
+    You are an EDI Specification Analyzer.
+    Extract validation rules from the attached Trading Partner Specification (PDF/Text/Image).
+    The specification describes an X12 or EDIFACT transaction (like 850, 810, 856).
+    
+    Output a JSON array of rules strictly adhering to this format. 
+    
+    Severity Guidelines:
+    - Mark as "ERROR" if the rule states "Must", "Mandatory", "Required", or "Shall".
+    - Mark as "WARNING" if the rule states "Should", "Recommended", or "If Available".
+
+    Supported Rule Types:
+    - REQUIRED_SEGMENT: A specific segment is marked as Mandatory (M) or Required.
+    - PROHIBITED_SEGMENT: A segment is marked as Not Used or Prohibited.
+    - MAX_LENGTH: An element (e.g. BEG03) has a max length constraint.
+    - ALLOWED_CODES: An element is restricted to a specific code list.
+    - CONDITIONAL_EXISTS: A rule saying "If X exists, Y must exist".
+    
+    Output JSON Format:
+    [
+      {
+        "id": "rule_1",
+        "type": "REQUIRED_SEGMENT",
+        "targetSegment": "REF",
+        "message": "REF segment is mandatory for this partner",
+        "severity": "ERROR"
+      },
+      {
+        "id": "rule_2",
+        "type": "ALLOWED_CODES",
+        "targetSegment": "BEG",
+        "targetElement": 2,
+        "params": { "codes": ["00", "01"] },
+        "message": "BEG02 must be 00 or 01",
+        "severity": "ERROR"
+      }
+    ]
+    
+    Return ONLY JSON. No markdown.
+  `;
+
+  try {
+    const settings = getSettings();
+    const ai = getGeminiClient();
+    const modelName = getModelName(settings); // Use the user's selected model (Flash/Pro)
+
+    let response;
+    
+    // Check if input is a file object (binary/base64)
+    if (typeof specInput === 'object' && specInput.data) {
+        response = await retryWithBackoff<GenerateContentResponse>(() => ai.models.generateContent({
+            model: modelName,
+            contents: {
+                parts: [
+                    { inlineData: { mimeType: specInput.mimeType, data: specInput.data } },
+                    { text: instruction }
+                ]
+            }
+        }));
+    } else {
+        // Text input
+        response = await retryWithBackoff<GenerateContentResponse>(() => ai.models.generateContent({
+            model: modelName,
+            contents: {
+                parts: [
+                    { text: `SPECIFICATION TEXT:\n${(specInput as string).substring(0, 30000)}\n\n${instruction}` }
+                ]
+            }
+        }));
+    }
+
+    const text = response.text || "[]";
     const cleanJson = text.replace(/```json/g, '').replace(/```/g, '').trim();
     return JSON.parse(cleanJson);
-  } catch (error: any) {
-    const msg = error.message && error.message.includes("API Key") ? "API Key Required" : "AI Validation Failed";
-    return { isValid: false, errors: [msg], warnings: [], score: 0 };
+  } catch (error) {
+    console.error("Rule Extraction Failed", error);
+    return [];
+  }
+};
+
+export const generateEdiFix = async (
+  segment: string, 
+  errorMessage: string, 
+  fullContext: string
+): Promise<FixResult | null> => {
+  const prompt = `
+    Analyze this specific validation error and provide a fix.
+    
+    Error Message: "${errorMessage}"
+    
+    Broken Segment:
+    ${segment}
+    
+    Context (Surrounding lines):
+    ${fullContext.substring(0, 2000)}...
+    
+    Return the response as a single JSON object matching the Output Example in the system instruction.
+  `;
+
+  try {
+    const text = await generateText(prompt, SYSTEM_INSTRUCTION_FIXER);
+    const cleanJson = text.replace(/```json/g, '').replace(/```/g, '').trim();
+    
+    let result;
+    try {
+        result = JSON.parse(cleanJson);
+        // Handle if model returns a list (as per system instruction) or single object
+        if (Array.isArray(result)) result = result[0];
+    } catch(e) {
+        console.warn("Failed to parse JSON fix", text);
+        return null;
+    }
+    
+    if (result && result.fix) {
+      return {
+        segment: result.fix,
+        explanation: result.explanation
+      };
+    }
+    
+    return null;
+  } catch (error) {
+    console.error("Fix Generation Failed", error);
+    return null;
   }
 };
 
@@ -488,21 +782,17 @@ export interface ChatResponse {
 export const sendEdiChat = async (
   history: ChatMessage[], 
   newMessage: string, 
-  context: string,
+  contextFiles: EdiFile[],
   options?: { useThinking?: boolean, useSearch?: boolean }
 ): Promise<ChatResponse> => {
   
   const settings = getSettings();
   const provider = settings.aiProvider || 'gemini';
 
-  const systemContext = SYSTEM_INSTRUCTION_EDI_EXPERT + `
-    
-    CONTEXT DATA FROM USER FILE:
-    ${context.substring(0, 20000)}
-  `;
+  const systemContext = SYSTEM_INSTRUCTION_EDI_EXPERT;
 
   if (provider === 'deepseek') {
-    const messages = [{ role: 'system', content: systemContext }];
+    const messages = [{ role: 'system', content: systemContext + `\n\nCONTEXT FILES:\n${contextFiles.map(f => f.content).join('\n')}` }];
     history.forEach(msg => {
       if (msg.image || msg.video) return;
       messages.push({ role: msg.role === 'model' ? 'assistant' : 'user', content: msg.text });
@@ -520,6 +810,8 @@ export const sendEdiChat = async (
     // Gemini
     try {
         const ai = getGeminiClient();
+        
+        // IMPORTANT: For faster response on reading docs/PDFs, default to gemini-2.5-flash unless Thinking is requested
         const modelName = options?.useThinking ? GEMINI_PRO : GEMINI_FLASH;
         
         const config: any = { systemInstruction: systemContext };
@@ -541,7 +833,32 @@ export const sendEdiChat = async (
             }))
         });
 
-        const result = await chat.sendMessage({ message: newMessage });
+        // Build Multimodal Message Parts
+        const messageParts: any[] = [];
+        
+        if (contextFiles && contextFiles.length > 0) {
+            messageParts.push({ text: "Here is the context from the user's workspace (Files/PDFs):" });
+            
+            for (const file of contextFiles) {
+                if (file.mimeType && file.mimeType !== 'text/plain') {
+                    // Binary Content (PDF, Image)
+                    messageParts.push({ 
+                        inlineData: { 
+                            mimeType: file.mimeType, 
+                            data: file.content // Assuming base64 content in EdiFile.content
+                        } 
+                    });
+                    messageParts.push({ text: `\n(Above is content of ${file.name})\n` });
+                } else {
+                    // Text Content
+                    messageParts.push({ text: `\n=== FILE: ${file.name} ===\n${file.content}\n` });
+                }
+            }
+        }
+
+        messageParts.push({ text: newMessage });
+
+        const result = await retryWithBackoff<GenerateContentResponse>(() => chat.sendMessage({ message: messageParts }));
         
         // Extract Grounding (Search Sources)
         const sources = result.candidates?.[0]?.groundingMetadata?.groundingChunks

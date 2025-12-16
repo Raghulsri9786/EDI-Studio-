@@ -29,8 +29,18 @@ export interface ValidationIssue {
   line?: number;
   segmentId?: string;
   elementId?: string;
-  source: 'LOCAL' | 'AI' | 'STEDI';
-  suggestion?: string;
+  source: 'LOCAL' | 'AI' | 'STEDI' | 'TP_RULE' | 'BUSINESS';
+  suggestion?: string; // The "fix" string
+  
+  // AI Rich Data
+  reason?: string;
+  explanation?: string; // Fix explanation
+  range?: { start: number; end: number };
+}
+
+export interface FixResult {
+  segment: string;
+  explanation: string;
 }
 
 export interface OrchestratedResult {
@@ -63,6 +73,7 @@ export interface EdiFile {
   name: string;
   content: string;
   lastModified: Date;
+  mimeType?: string; // Added to support PDF/Image context
   analysis?: EdiAnalysisResult;
   // Comparison support
   isCompareView?: boolean;
@@ -100,7 +111,7 @@ export enum AppMode {
   AI_STUDIO = 'AI_STUDIO',
 }
 
-export type PanelTab = 'chat' | 'validate' | 'tools' | 'json';
+export type PanelTab = 'chat' | 'validate' | 'tools' | 'json' | 'rules';
 
 export interface ComparisonResult {
   diffAnalysis: string;
@@ -164,11 +175,32 @@ export interface LineError {
   message: string;
   severity: 'ERROR' | 'WARNING';
   tokenIndex?: number; // Which element caused it (-1 for whole line)
+  
+  // AI Fix Extensions
+  fix?: string;
+  explanation?: string;
+  reason?: string;
+  range?: { start: number; end: number };
 }
 
 export interface EditorValidationResult {
   isValid: boolean;
   errors: LineError[];
+}
+
+// --- STRUCTURE VALIDATION TYPES ---
+
+export interface SegmentRule {
+  id: string;
+  req: boolean; // Mandatory
+  repeat?: boolean; // Can repeat
+  loop?: boolean; // Is this a loop starter?
+  children?: SegmentRule[]; // If loop, what's inside?
+}
+
+export interface TransactionDef {
+  type: string; // "850", "810"
+  structure: SegmentRule[];
 }
 
 // --- DIFF ENGINE TYPES ---
@@ -222,4 +254,33 @@ export interface StediConfig {
   apiKey: string;
   partnershipId: string;
   transactionSettingId: string;
+}
+
+// --- TRADING PARTNER RULES ---
+
+export type RuleType = 
+  | 'REQUIRED_SEGMENT' 
+  | 'PROHIBITED_SEGMENT' 
+  | 'MAX_LENGTH' 
+  | 'ALLOWED_CODES' 
+  | 'CONDITIONAL_EXISTS'
+  | 'CUSTOM_BUSINESS_LOGIC';
+
+export interface TPRule {
+  id: string;
+  type: RuleType;
+  targetSegment: string;
+  targetElement?: number; // 1-based index
+  params?: any; // e.g. { length: 10 } or { codes: ['A','B'] }
+  message: string;
+  severity: 'ERROR' | 'WARNING';
+}
+
+export interface TPRuleSet {
+  id: string;
+  name: string; // e.g. "Walmart 850 Specs"
+  transactionType: string; // "850"
+  rules: TPRule[];
+  rawSpecText?: string; // Original text for reference
+  isActive: boolean;
 }

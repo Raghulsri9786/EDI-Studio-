@@ -124,8 +124,6 @@ export interface AppSettings {
   theme: 'light' | 'dark'; 
   aiModel: 'balanced' | 'speed' | 'power';
   aiProvider: 'gemini' | 'deepseek';
-  geminiApiKey?: string;
-  deepSeekApiKey?: string;
 }
 
 // --- SMART EDITOR TYPES ---

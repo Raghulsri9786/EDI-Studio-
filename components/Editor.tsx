@@ -1,10 +1,11 @@
+
 import React, { useState, useMemo, useRef, useEffect, useLayoutEffect, forwardRef, useImperativeHandle, useCallback } from 'react';
 import { Search, CaseSensitive, WholeWord, Regex, AlertOctagon, ChevronRight, ChevronDown, XCircle, Sparkles, Loader2, Check, AlertTriangle, Lock } from 'lucide-react';
 import { parseEdiToLines } from '../utils/ediParser';
 import { ParsedLine, EdiToken, AppSettings, EditorValidationResult, LineError, ElementSchema } from '../types';
 import { validateRealTime } from '../utils/ediValidator';
 import { warpEdi, unwarpEdi } from '../utils/ediFormatter';
-import { generateEdiFix } from '../services/geminiService';
+import { generateEdiFix, hasValidApiKey } from '../services/geminiService';
 import HoverInfo from './HoverInfo';
 import { animatePanelEnter } from '../utils/gsapAnimations';
 
@@ -209,7 +210,8 @@ const EditorRow = React.memo(({
   const hasWarning = errors.some(e => e.severity === 'WARNING');
   const hasError = hasCriticalError || hasWarning;
 
-  const hasApiKey = settings.aiProvider === 'deepseek' ? !!settings.deepSeekApiKey : !!settings.geminiApiKey;
+  // Fix property access errors by using hasValidApiKey helper
+  const hasApiKey = hasValidApiKey(settings.aiProvider);
 
   let rowBgClass = 'hover:bg-white/[0.03]';
   if (hasCriticalError) {

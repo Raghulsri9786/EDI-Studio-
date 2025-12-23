@@ -92,10 +92,8 @@ export const cloudService = {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return;
 
-    // Sanitize: REMOVE API KEYS before saving to cloud
+    // Sanitize: Ensure settings are clean before saving to cloud
     const safeSettings = { ...settings };
-    delete safeSettings.geminiApiKey;
-    delete safeSettings.deepSeekApiKey;
 
     const { error } = await supabase
       .from('user_settings')

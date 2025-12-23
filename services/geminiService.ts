@@ -1,9 +1,11 @@
+
 import { GoogleGenAI } from "@google/genai";
 import { ChatMessage, EdiAnalysisResult, EdiFile, FixResult, LineError } from '../types';
 
+// Standard Model Names based on Task
 const MODEL_TEXT_BASIC = 'gemini-3-flash-preview';
 const MODEL_TEXT_COMPLEX = 'gemini-3-pro-preview';
-const MODEL_IMAGE = 'gemini-3-pro-image-preview';
+const MODEL_IMAGE = 'gemini-2.5-flash-image';
 const MODEL_VIDEO = 'veo-3.1-fast-generate-preview';
 
 const SYSTEM_INSTRUCTION_COPILOT = `
@@ -21,6 +23,7 @@ const SYSTEM_INSTRUCTION_VALIDATOR = `
 Full X12/EDIFACT Validation + Auto-Fix Engine. Return JSON array of errors.
 `;
 
+// Helper to get AI client. Always uses process.env.API_KEY.
 const getGeminiAi = () => new GoogleGenAI({ apiKey: process.env.API_KEY || "" });
 
 /**
@@ -28,7 +31,7 @@ const getGeminiAi = () => new GoogleGenAI({ apiKey: process.env.API_KEY || "" })
  */
 async function callDeepSeek(messages: any[], systemPrompt: string, responseJson: boolean = false) {
   const apiKey = process.env.DEEPSEEK_API_KEY;
-  if (!apiKey) throw new Error("DeepSeek API Key missing from environment.");
+  if (!apiKey) throw new Error("DeepSeek API Key missing from host environment.");
 
   const response = await fetch("https://api.deepseek.com/chat/completions", {
     method: "POST",
@@ -76,7 +79,7 @@ export const generateEdiFlowImage = async (prompt: string): Promise<string> => {
   const response = await ai.models.generateContent({
     model: MODEL_IMAGE,
     contents: { parts: [{ text: diagramPrompt }] },
-    config: { imageConfig: { aspectRatio: "16:9", imageSize: "1K" } }
+    config: { imageConfig: { aspectRatio: "16:9" } }
   });
   
   for (const part of response.candidates[0].content.parts) {
@@ -87,8 +90,11 @@ export const generateEdiFlowImage = async (prompt: string): Promise<string> => {
 
 export const generateEdiFlowVideo = async (prompt: string): Promise<string> => {
   const ai = getGeminiAi();
-  if (!(await window.aistudio.hasSelectedApiKey())) await window.aistudio.openSelectKey();
-  
+  // Mandatory system key selection check before using Veo
+  if (!(await window.aistudio.hasSelectedApiKey())) {
+    await window.aistudio.openSelectKey();
+  }
+
   const videoPrompt = `
     High-quality animated motion graphics showing an EDI Transaction Flow.
     Exchange between 'Client' and 'Trading Partner (TP)'.
@@ -136,8 +142,13 @@ export const sendEdiChat = async (
   const ai = getGeminiAi();
   const model = options?.useThinking ? MODEL_TEXT_COMPLEX : MODEL_TEXT_BASIC;
   const config: any = { systemInstruction: SYSTEM_INSTRUCTION_COPILOT };
-  if (options?.useThinking) config.thinkingConfig = { thinkingBudget: 24576 };
-  if (options?.useSearch && !options?.useThinking) config.tools = [{ googleSearch: {} }];
+  
+  if (options?.useThinking) {
+    config.thinkingConfig = { thinkingBudget: 24576 };
+  }
+  if (options?.useSearch && !options?.useThinking) {
+    config.tools = [{ googleSearch: {} }];
+  }
 
   const chat = ai.chats.create({
     model,
@@ -302,7 +313,6 @@ export const explainEdiDiff = async (diff: string, provider: 'gemini' | 'deepsee
   return response.text || "";
 };
 
-// Add generateStediGuideJson to support Stedi integration
 export const generateStediGuideJson = async (content: string): Promise<string> => {
   const ai = getGeminiAi();
   const response = await ai.models.generateContent({

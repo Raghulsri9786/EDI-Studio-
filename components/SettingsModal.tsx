@@ -1,6 +1,5 @@
-
 import React, { useState } from 'react';
-import { X, Monitor, Type, Hash, Zap, BrainCircuit, Database, Trash2, Globe } from 'lucide-react';
+import { X, Monitor, Type, Hash, Zap, BrainCircuit, Database, Trash2, Globe, Key, ExternalLink } from 'lucide-react';
 import { AppSettings } from '../types';
 import { storageService } from '../services/storageService';
 
@@ -9,9 +8,10 @@ interface SettingsModalProps {
   onClose: () => void;
   settings: AppSettings;
   onUpdateSettings: (s: AppSettings) => void;
+  onSelectKey: () => void;
 }
 
-const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, settings, onUpdateSettings }) => {
+const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, settings, onUpdateSettings, onSelectKey }) => {
   const [clearingDb, setClearingDb] = useState(false);
 
   if (!isOpen) return null;
@@ -71,6 +71,13 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, settings
                 ))}
               </div>
             </div>
+            
+            <button 
+              onClick={onSelectKey}
+              className="w-full mt-2 flex items-center justify-center gap-2 py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-lg text-xs font-bold transition-all border border-slate-200"
+            >
+              <Key size={14} /> Update Connected Keys
+            </button>
           </div>
 
           <hr className="border-slate-100" />

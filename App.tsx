@@ -71,8 +71,6 @@ function App() {
   const [isStediOpen, setIsStediOpen] = useState(false);
   const [isVoiceAgentOpen, setIsVoiceAgentOpen] = useState(false);
 
-  const autoSaveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
   const editorRef = useRef<EditorHandle>(null);
   const [editorState, setEditorState] = useState<EditorState>({
     canUndo: false, 
@@ -204,13 +202,23 @@ function App() {
       );
     }
 
-    if (!activeFile) return null;
+    if (!activeFile) return (
+      <div className="flex-1 flex flex-col items-center justify-center p-8 text-center text-slate-500">
+         <FileCode size={64} className="mb-4 opacity-10" />
+         <h2 className="text-xl font-bold text-slate-300">Welcome to EDI Studio</h2>
+         <p className="max-w-xs mt-2 text-sm">Open a file from the explorer or create a new one to begin your EDI journey.</p>
+      </div>
+    );
 
     return (
       <div className="flex flex-col h-full w-full" ref={mainRef}>
         <div className="flex items-center justify-between bg-slate-900/50 border-b border-white/5 backdrop-blur-sm pr-3 h-10 relative z-20">
            <div className="flex-1 overflow-hidden">
-              <EditorTabs files={openFiles} activeFileId={activeFileId} onSelect={setActiveFileId} onClose={() => {}} />
+              <EditorTabs files={openFiles} activeFileId={activeFileId} onSelect={setActiveFileId} onClose={(id) => {
+                const updated = openFileIds.filter(fid => fid !== id);
+                setOpenFileIds(updated);
+                if (activeFileId === id) setActiveFileId(updated[0] || null);
+              }} />
            </div>
            <div className="flex-none pl-2">
               <EditorToolbar editorRef={editorRef} editorState={editorState} isBusinessView={isBusinessView} ediContent={activeFile.content} onValidate={() => handleCommand('validate')} />
@@ -274,7 +282,17 @@ function App() {
 
       <div className="flex-1 flex overflow-hidden relative z-10 w-full">
         <div ref={sidebarRef} className={`flex-none flex flex-col h-full overflow-hidden bg-slate-900/50 border-r border-white/5 backdrop-blur-md z-20 ${!isResizing ? 'transition-all duration-300 ease-in-out' : ''}`} style={{ width: isSidebarOpen ? sidebarWidth : 0, opacity: isSidebarOpen ? 1 : 0 }}>
-           <FileExplorer files={files} activeFileId={activeFileId} selectedFileIds={selectedFileIds} onSelectFile={(id) => { setActiveFileId(id); setOpenFileIds(prev => prev.includes(id) ? prev : [...prev, id]); }} onToggleSelection={() => {}} onCompareSelected={() => {}} onAiSummarizeSelected={() => setAppMode(AppMode.AI_STUDIO)} onNewFile={() => {}} onDeleteFile={() => {}} onUpload={() => {}} />
+           <FileExplorer files={files} activeFileId={activeFileId} selectedFileIds={selectedFileIds} onSelectFile={(id) => { setActiveFileId(id); setOpenFileIds(prev => prev.includes(id) ? prev : [...prev, id]); }} onToggleSelection={(id) => {
+             const next = new Set(selectedFileIds);
+             if (next.has(id)) next.delete(id); else next.add(id);
+             setSelectedFileIds(next);
+           }} onCompareSelected={() => setAppMode(AppMode.COMPARE)} onAiSummarizeSelected={() => setAppMode(AppMode.AI_STUDIO)} onNewFile={() => {
+             const id = Date.now().toString();
+             const newFile = { id, name: `New File ${files.length + 1}.edi`, content: '', lastModified: new Date() };
+             setFiles([...files, newFile]);
+             setActiveFileId(id);
+             setOpenFileIds([...openFileIds, id]);
+           }} onDeleteFile={(id) => setFiles(files.filter(f => f.id !== id))} onUpload={() => {}} />
         </div>
         {isSidebarOpen && <div className="w-1 h-full cursor-col-resize hover:bg-blue-500/50 active:bg-blue-600 transition-colors z-30 flex-none" onMouseDown={startResizing('left')} />}
         <div className="flex-1 flex flex-col min-w-0 relative z-10 h-full overflow-hidden">{renderMainArea()}</div>
@@ -309,7 +327,7 @@ function App() {
             </div>
         </div>
       </div>
-      <SettingsModal isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} settings={settings} onUpdateSettings={setSettings} />
+      <SettingsModal isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} settings={settings} onUpdateSettings={setSettings} onSelectKey={() => { window.aistudio.openSelectKey(); }} />
       <StediModal isOpen={isStediOpen} onClose={() => setIsStediOpen(false)} activeFileContent={activeFile?.content || ''} />
       <SaveAsModal isOpen={isSaveAsModalOpen} onClose={() => setIsSaveAsModalOpen(false)} currentName={activeFile?.name || ''} onSave={updateActiveContent} />
       <LiveVoiceAgent isOpen={isVoiceAgentOpen} onClose={() => setIsVoiceAgentOpen(false)} files={chatContextFiles} />

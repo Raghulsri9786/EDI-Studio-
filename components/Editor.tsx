@@ -1,8 +1,7 @@
-
 import React, { useState, useMemo, useRef, useEffect, useLayoutEffect, forwardRef, useImperativeHandle, useCallback } from 'react';
 import { Search, CaseSensitive, WholeWord, Regex, AlertOctagon, ChevronRight, ChevronDown, XCircle, Sparkles, Loader2, Check, AlertTriangle, Lock } from 'lucide-react';
 import { parseEdiToLines } from '../utils/ediParser';
-import { ParsedLine, EdiToken, AppSettings, EditorValidationResult, LineError } from '../types';
+import { ParsedLine, EdiToken, AppSettings, EditorValidationResult, LineError, ElementSchema } from '../types';
 import { validateRealTime } from '../utils/ediValidator';
 import { warpEdi, unwarpEdi } from '../utils/ediFormatter';
 import { generateEdiFix } from '../services/geminiService';
@@ -54,7 +53,7 @@ interface EditorPopupState {
   validationError?: string; 
 }
 
-// Simple Tokenizer for Non-EDI files (JSON, XML, CSV)
+// Simple Tokenizer for Non-EDI files
 const genericTokenizer = (text: string, format: 'json' | 'xml' | 'csv' | 'text'): EdiToken[] => {
   const tokens: EdiToken[] = [];
   let index = 0;
@@ -81,32 +80,6 @@ const genericTokenizer = (text: string, format: 'json' | 'xml' | 'csv' | 'text')
     }
     if (lastIndex < text.length) tokens.push({ type: 'ELEMENT', value: text.substring(lastIndex), index });
   } 
-  else if (format === 'xml') {
-    const regex = /(<\/?[a-zA-Z0-9_\-:]+[^>]*>|"[^"]*")/g;
-    let match;
-    let lastIndex = 0;
-    while ((match = regex.exec(text)) !== null) {
-       if (match.index > lastIndex) {
-         tokens.push({ type: 'ELEMENT', value: text.substring(lastIndex, match.index), index });
-         index++;
-       }
-       const val = match[0];
-       let type: any = 'ELEMENT';
-       if (val.startsWith('<')) type = 'SEGMENT_ID'; 
-       else if (val.startsWith('"')) type = 'TERMINATOR'; 
-       tokens.push({ type: type, value: val, index });
-       index++;
-       lastIndex = regex.lastIndex;
-    }
-    if (lastIndex < text.length) tokens.push({ type: 'ELEMENT', value: text.substring(lastIndex), index });
-  }
-  else if (format === 'csv') {
-      const parts = text.split(',');
-      parts.forEach((p, i) => {
-          if (i > 0) tokens.push({ type: 'DELIMITER', value: ',', index: -1 });
-          tokens.push({ type: 'ELEMENT', value: p, index: i });
-      });
-  }
   else {
       tokens.push({ type: 'ELEMENT', value: text, index: 0 });
   }
@@ -116,44 +89,68 @@ const genericTokenizer = (text: string, format: 'json' | 'xml' | 'csv' | 'text')
 // Fixed row height for virtualization (only used when no errors present)
 const ROW_HEIGHT = 24;
 
-// Color Logic
+/**
+ * REFINED SYNTAX HIGHLIGHTING LOGIC
+ * Optimized for Dark Mode (Slate 950 Background)
+ */
 const getTokenColor = (token: EdiToken, format: string, isEdiMode: boolean) => {
     if (format === 'json') {
-        if (token.type === 'SEGMENT_ID') return 'text-blue-400 font-bold'; 
-        if (token.type === 'DELIMITER') return 'text-slate-500'; 
-        if (token.type === 'TERMINATOR') return 'text-emerald-400'; 
-        if (token.value.startsWith('"') && token.value.endsWith('":')) return 'text-sky-300 font-semibold'; 
-        if (token.value.startsWith('"')) return 'text-amber-300'; 
+        if (token.type === 'SEGMENT_ID') return 'text-purple-400 font-bold'; // true, false, null
+        if (token.type === 'DELIMITER') return 'text-slate-500'; // brackets, commas
+        if (token.type === 'TERMINATOR') return 'text-orange-300 font-mono'; // numbers
+        if (token.value.startsWith('"') && token.value.endsWith('":')) return 'text-sky-300 font-semibold'; // Keys
+        if (token.value.startsWith('"')) return 'text-emerald-300'; // String values
     } 
-    else if (format === 'xml') {
-        if (token.type === 'SEGMENT_ID') return 'text-blue-400'; 
-        if (token.type === 'TERMINATOR') return 'text-amber-300'; 
-        if (token.value.includes('=')) return 'text-sky-300'; 
-    }
-    else if (format === 'csv') {
-        if (token.type === 'DELIMITER') return 'text-slate-600 bg-slate-800/50';
-        return 'text-slate-300 group-hover:text-white';
-    }
-    else if (isEdiMode) {
-        // Minimal & Professional Theme
+    
+    if (isEdiMode) {
         if (token.type === 'SEGMENT_ID') {
             const val = token.value;
-            // Envelopes & Headers (Pink/Purple)
-            if (['ISA', 'GS', 'ST', 'UNB', 'UNG', 'UNH'].includes(val)) return 'text-pink-400 font-bold';
-            // Trailers (Pink/Purple)
-            if (['IEA', 'GE', 'SE', 'UNZ', 'UNE', 'UNT'].includes(val)) return 'text-pink-400 font-bold';
-            
-            // Loop Starters (Purple/Blue) - Common X12 and EDIFACT loop triggers
-            if (['N1', 'NM1', 'PO1', 'IT1', 'HL', 'LIN', 'LX', 'ENT', 'NAD', 'S5', 'R4', 'REF'].includes(val)) {
-                 return 'text-purple-400 font-bold'; 
+            // ENVELOPES & CONTROL (Rose/Red-ish)
+            if (['ISA', 'GS', 'ST', 'UNB', 'UNG', 'UNH', 'IEA', 'GE', 'SE', 'UNZ', 'UNE', 'UNT'].includes(val)) {
+                return 'text-rose-400 font-bold tracking-tight';
             }
             
-            // Standard Segments (Blue)
-            return 'text-blue-300 font-semibold tracking-wide'; 
+            // LOOP STARTERS & KEY SEGMENTS (Vivid Blue)
+            if (['N1', 'NM1', 'PO1', 'IT1', 'HL', 'LIN', 'LX', 'ENT', 'NAD', 'S5', 'R4', 'REF', 'CLM', 'BHT'].includes(val)) {
+                 return 'text-sky-400 font-bold'; 
+            }
+
+            // COMMENTS & DOCUMENTATION SEGMENTS (Dimmed Gray)
+            if (['MSG', 'NTE', 'PID', 'G69', 'FTX'].includes(val)) {
+                return 'text-slate-500 italic font-medium';
+            }
+
+            // STANDARD SEGMENTS (Light Blue)
+            return 'text-blue-300 font-semibold'; 
         }
-        if (token.type === 'DELIMITER') return 'text-slate-600'; 
-        if (token.type === 'TERMINATOR') return 'text-slate-600'; 
-        if (token.type === 'ELEMENT') return 'text-[#E0E5F0]'; 
+        
+        // STRUCTURAL DELIMITERS (Amber/Zinc - subtle but distinct)
+        if (token.type === 'DELIMITER' || token.type === 'TERMINATOR') {
+            return 'text-slate-500 font-bold opacity-60'; 
+        }
+        
+        // DATA ELEMENTS (Typed Coloring)
+        if (token.type === 'ELEMENT') {
+            const schema = token.schema as ElementSchema | undefined;
+            if (schema) {
+                switch(schema.type) {
+                    case 'DT': // DATE
+                    case 'TM': // TIME
+                        return 'text-emerald-400 font-mono';
+                    case 'N0': // INTEGER
+                    case 'N2': // DECIMAL
+                    case 'R':  // REAL
+                        return 'text-orange-300 font-mono';
+                    case 'ID': // IDENTIFIER / QUALIFIER
+                        return 'text-indigo-300 font-semibold';
+                    case 'AN': // ALPHANUMERIC
+                    default: 
+                        return 'text-slate-100';
+                }
+            }
+            // Default element color if no schema
+            return 'text-slate-200'; 
+        }
     }
     
     return 'text-slate-300';
@@ -214,13 +211,13 @@ const EditorRow = React.memo(({
 
   const hasApiKey = settings.aiProvider === 'deepseek' ? !!settings.deepSeekApiKey : !!settings.geminiApiKey;
 
-  let rowBgClass = 'hover:bg-[#2a2d2e]';
+  let rowBgClass = 'hover:bg-white/[0.03]';
   if (hasCriticalError) {
       rowBgClass = 'bg-red-500/10';
   } else if (hasWarning) {
       rowBgClass = 'bg-amber-500/10';
   } else if (isEdiMode && line.isLoopStart) {
-      rowBgClass = 'bg-purple-500/5 hover:bg-purple-500/10';
+      rowBgClass = 'bg-sky-500/[0.03] hover:bg-sky-500/[0.06]';
   }
 
   // We override fixed height if there are errors to display the block
@@ -247,7 +244,7 @@ const EditorRow = React.memo(({
       <div className="flex relative">
         {/* Gutter */}
         {settings.showLineNumbers && (
-            <div className="sticky left-0 z-20 w-12 flex-none bg-[#1e1e1e] text-[#858585] text-right pr-3 select-none flex items-center justify-end gap-1 border-r border-[#333333] relative py-0.5 self-stretch">
+            <div className="sticky left-0 z-20 w-12 flex-none bg-slate-900/40 text-slate-500 text-right pr-3 select-none flex items-center justify-end gap-1 border-r border-white/5 relative py-0.5 self-stretch">
             {hasError && (
                 <div 
                     onClick={(e) => { e.stopPropagation(); setIsErrorOpen(!isErrorOpen); }}
@@ -262,7 +259,7 @@ const EditorRow = React.memo(({
                 </div>
             )}
             {line.isLoopStart && line.loopEndLine ? (
-                <button onClick={(e) => { e.stopPropagation(); onToggleFold(originalIndex, line.loopEndLine!); }} className="text-[#858585] hover:text-white focus:outline-none transition-colors">
+                <button onClick={(e) => { e.stopPropagation(); onToggleFold(originalIndex, line.loopEndLine!); }} className="text-slate-500 hover:text-white focus:outline-none transition-colors">
                 {isFolded ? <ChevronRight size={12} /> : <ChevronDown size={12} />}
                 </button>
             ) : <span className="w-3"></span>}
@@ -276,14 +273,17 @@ const EditorRow = React.memo(({
             {isEdiMode && line.indent > 0 && (
                 <div className="absolute top-0 bottom-0 left-3 flex select-none pointer-events-none z-0">
                     {Array.from({ length: line.indent }).map((_, i) => (
-                        <div key={i} className="w-4 border-l border-white/5 h-full" />
+                        <div key={i} className="w-4 border-l border-white/[0.04] h-full" />
                     ))}
                 </div>
             )}
 
-            <div style={{ paddingLeft: isEdiMode ? `${line.indent * 16}px` : '0px' }} className={`flex items-center ${wrapClass} py-0.5 relative z-10`}>
+            <div 
+                style={{ paddingLeft: isEdiMode ? `${line.indent * 16}px` : '0px' }} 
+                className={`flex items-center ${visualWrap ? 'flex-wrap' : ''} ${wrapClass} py-0.5 relative z-10`}
+            >
             {isFolded ? (
-                <span className="bg-[#333333] text-[#cccccc] px-2 py-0.5 rounded text-xs cursor-pointer select-none border border-[#444444] hover:border-[#666666] transition-colors" onClick={(e) => { e.stopPropagation(); onToggleFold(originalIndex, line.loopEndLine!); }}>...</span>
+                <span className="bg-slate-800 text-slate-400 px-2 py-0.5 rounded text-[10px] uppercase font-bold cursor-pointer select-none border border-white/5 hover:border-white/20 transition-colors" onClick={(e) => { e.stopPropagation(); onToggleFold(originalIndex, line.loopEndLine!); }}>Folding Loop...</span>
             ) : (
                 line.tokens.map((token, tIdx) => {
                 const colorClass = getTokenColor(token, isEdiMode ? 'edi' : fileFormat, isEdiMode);
@@ -309,9 +309,9 @@ const EditorRow = React.memo(({
                 let errorDecoration = '';
                 if (tokenIssue) {
                     if (tokenIssue.severity === 'ERROR') {
-                        errorDecoration = 'underline decoration-red-500 decoration-wavy underline-offset-2';
+                        errorDecoration = 'underline decoration-red-500/50 decoration-wavy underline-offset-4';
                     } else {
-                        errorDecoration = 'underline decoration-amber-500 decoration-wavy underline-offset-2';
+                        errorDecoration = 'underline decoration-amber-500/50 decoration-wavy underline-offset-4';
                     }
                 }
 
@@ -321,7 +321,7 @@ const EditorRow = React.memo(({
                 return (
                     <span
                     key={tIdx}
-                    className={`${colorClass} ${searchClass} ${isActive ? 'bg-white/10 ring-1 ring-white/20 rounded' : ''} ${errorDecoration} hover:brightness-110 transition-colors duration-75 relative select-none cursor-pointer`}
+                    className={`${colorClass} ${searchClass} ${isActive ? 'bg-white/10 ring-1 ring-white/20 rounded' : ''} ${errorDecoration} hover:brightness-125 transition-all duration-150 relative select-none cursor-pointer`}
                     onMouseEnter={(e) => onTokenEnter(e, token, line, tokenIssue?.message)}
                     onMouseLeave={onTokenLeave}
                     onClick={(e) => onTokenClick(e, token, line, tokenIssue?.message)}
@@ -339,38 +339,38 @@ const EditorRow = React.memo(({
       {!isFolded && hasError && isErrorOpen && (
         <div className="pl-12 pr-4 pb-4 pt-2 relative z-0">
             {errors.map((err, idx) => (
-                <div key={idx} className={`border rounded-md p-3 shadow-lg animate-in fade-in slide-in-from-top-1 mb-2 ${err.severity === 'ERROR' ? 'bg-[#2b1d1d] border-red-900/50' : 'bg-[#2b261d] border-amber-900/50'}`}>
-                    <div className="flex gap-3">
+                <div key={idx} className={`border rounded-xl p-4 shadow-2xl animate-in fade-in slide-in-from-top-2 mb-2 ${err.severity === 'ERROR' ? 'bg-red-500/5 border-red-500/20' : 'bg-amber-500/5 border-amber-500/20'}`}>
+                    <div className="flex gap-4">
                         <div className={`flex-none pt-0.5 ${err.severity === 'ERROR' ? 'text-red-500' : 'text-amber-500'}`}>
-                            {err.severity === 'ERROR' ? <XCircle size={14} /> : <AlertTriangle size={14} />}
+                            {err.severity === 'ERROR' ? <AlertOctagon size={18} /> : <AlertTriangle size={18} />}
                         </div>
                         <div className="flex-1">
-                            <h4 className={`text-xs font-bold mb-1 ${err.severity === 'ERROR' ? 'text-red-200' : 'text-amber-200'}`}>
-                                {err.code ? `${err.code}: ` : ''}{err.severity === 'ERROR' ? 'Error' : 'Warning'}
+                            <h4 className={`text-xs font-bold mb-1 uppercase tracking-wider ${err.severity === 'ERROR' ? 'text-red-400' : 'text-amber-400'}`}>
+                                {err.code ? `${err.code}: ` : ''}{err.severity === 'ERROR' ? 'Structural Error' : 'Validation Warning'}
                             </h4>
-                            <p className={`text-xs font-sans leading-relaxed mb-2 ${err.severity === 'ERROR' ? 'text-red-300' : 'text-amber-300'}`}>
+                            <p className={`text-sm font-sans leading-relaxed mb-4 ${err.severity === 'ERROR' ? 'text-slate-200' : 'text-slate-300'}`}>
                                 {err.message}
                             </p>
                             
                             {/* AI Fix Section */}
                             {(aiFix || err.fix) ? (
-                                <div className="mt-2 bg-black/20 rounded p-2 border border-white/5">
-                                    <div className="text-[10px] text-emerald-400 font-bold mb-1 flex items-center gap-1">
-                                        <Sparkles size={10} /> Suggested Fix
+                                <div className="mt-2 bg-black/40 rounded-xl p-3 border border-white/5 shadow-inner">
+                                    <div className="text-[10px] text-emerald-400 font-bold mb-2 flex items-center gap-1.5 uppercase tracking-widest">
+                                        <Sparkles size={12} /> AI Proposed Fix
                                     </div>
-                                    <div className="font-mono text-xs text-slate-300 bg-black/40 p-1.5 rounded border border-white/5 mb-2 overflow-x-auto">
+                                    <div className="font-mono text-xs text-emerald-100 bg-emerald-500/5 p-3 rounded-lg border border-emerald-500/20 mb-3 overflow-x-auto">
                                         {aiFix?.segment || err.fix}
                                     </div>
                                     {aiFix?.explanation && (
-                                        <p className="text-[10px] text-slate-400 mb-2 italic">
+                                        <p className="text-[11px] text-slate-400 mb-3 leading-relaxed">
                                             {aiFix.explanation}
                                         </p>
                                     )}
                                     <button 
                                         onClick={() => onApplyFix(line.lineNumber, aiFix?.segment || err.fix!)}
-                                        className="px-3 py-1 bg-emerald-600 hover:bg-emerald-500 text-white text-[10px] font-bold rounded flex items-center gap-1 transition-colors"
+                                        className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-lg flex items-center gap-2 transition-all shadow-lg shadow-emerald-900/20 active:scale-95"
                                     >
-                                        <Check size={10} /> Apply Fix
+                                        <Check size={14} /> Apply Change
                                     </button>
                                 </div>
                             ) : (
@@ -378,15 +378,15 @@ const EditorRow = React.memo(({
                                     <button 
                                         onClick={handleAiFix}
                                         disabled={isGeneratingFix}
-                                        className={`mt-1 px-3 py-1.5 border text-[10px] font-bold rounded flex items-center gap-1.5 transition-all disabled:opacity-50 ${
+                                        className={`px-4 py-2 border text-xs font-bold rounded-lg flex items-center gap-2 transition-all disabled:opacity-50 ${
                                             hasApiKey 
-                                            ? 'bg-red-900/40 hover:bg-red-900/60 border-red-800 text-red-200' 
-                                            : 'bg-slate-800 hover:bg-slate-700 border-slate-600 text-slate-400'
+                                            ? 'bg-blue-600/10 hover:bg-blue-600 border-blue-500/30 text-blue-200 hover:text-white shadow-lg' 
+                                            : 'bg-slate-800 border-slate-700 text-slate-500'
                                         }`}
                                         title={hasApiKey ? "Generate fix with AI" : "API Key Required"}
                                     >
-                                        {isGeneratingFix ? <Loader2 size={10} className="animate-spin" /> : (hasApiKey ? <Sparkles size={10} /> : <Lock size={10} />)}
-                                        {hasApiKey ? "Auto-Fix with AI" : "AI Fix Locked"}
+                                        {isGeneratingFix ? <Loader2 size={14} className="animate-spin" /> : (hasApiKey ? <Sparkles size={14} /> : <Lock size={14} />)}
+                                        {hasApiKey ? "Request AI Repair" : "AI Fix Locked"}
                                     </button>
                                 )
                             )}
@@ -405,7 +405,7 @@ const Editor = forwardRef<EditorHandle, EditorProps>(({
   onChange, 
   fileName = 'Untitled.txt', 
   searchTerm: externalSearchTerm = '', 
-  settings = { fontSize: 'medium', showLineNumbers: true, theme: 'dark', aiModel: 'speed' },
+  settings = { fontSize: 'medium', showLineNumbers: true, theme: 'dark', aiModel: 'speed', aiProvider: 'gemini' },
   onSave,
   onStateChange
 }, ref) => {
@@ -465,7 +465,6 @@ const Editor = forwardRef<EditorHandle, EditorProps>(({
   const isEdiMode = useMemo(() => {
     const lower = fileName.toLowerCase();
     const cleanContent = content.trim();
-    // Simple EDI check - does not apply to PDFs
     if (fileFormat === 'pdf') return false;
 
     const looksLikeEdi = 
@@ -764,7 +763,7 @@ const Editor = forwardRef<EditorHandle, EditorProps>(({
   // --- PDF Viewer Mode ---
   if (fileFormat === 'pdf') {
       return (
-        <div className="flex flex-col h-full bg-[#1e1e1e] relative">
+        <div className="flex flex-col h-full bg-[#020617] relative">
             <iframe 
                 src={`data:application/pdf;base64,${content}`} 
                 className="w-full h-full border-none"
@@ -775,24 +774,24 @@ const Editor = forwardRef<EditorHandle, EditorProps>(({
   }
 
   return (
-    <div className="flex flex-col h-full bg-[#1e1e1e] text-slate-300 relative" onClick={handleBackgroundClick} ref={containerRef}>
+    <div className="flex flex-col h-full bg-[#020617] text-slate-300 relative" onClick={handleBackgroundClick} ref={containerRef}>
       {isFindOpen && (
-        <div className="absolute top-2 right-4 left-4 z-20 bg-[#252526] border border-[#3e3e42] p-2 rounded-lg shadow-xl animate-in slide-in-from-top-2 max-w-2xl mx-auto ring-1 ring-black/20">
+        <div className="absolute top-2 right-4 left-4 z-20 bg-slate-900 border border-white/10 p-2 rounded-xl shadow-2xl animate-in slide-in-from-top-2 max-w-2xl mx-auto ring-1 ring-black/40">
            <div className="flex flex-col gap-2">
              <div className="flex gap-2">
                 <div className="relative flex-1 group">
                    <div className="absolute left-2.5 top-2 text-slate-500"><Search size={14}/></div>
-                   <input type="text" value={findText} onChange={(e) => setFindText(e.target.value)} placeholder="Find..." className="w-full bg-[#1e1e1e] border border-[#3e3e42] rounded pl-8 pr-20 py-1 text-xs text-white focus:border-blue-500 outline-none transition-all" autoFocus />
-                   <div className="absolute right-1 top-0.5 flex gap-0.5">
-                      <button onClick={() => setMatchCase(!matchCase)} className={`p-1 rounded ${matchCase ? 'bg-blue-500/20 text-blue-400' : 'text-slate-500 hover:text-white'}`} title="Match Case"><CaseSensitive size={12}/></button>
-                      <button onClick={() => setMatchWholeWord(!matchWholeWord)} className={`p-1 rounded ${matchWholeWord ? 'bg-blue-500/20 text-blue-400' : 'text-slate-500 hover:text-white'}`} title="Match Whole Word"><WholeWord size={12}/></button>
-                      <button onClick={() => setUseRegex(!useRegex)} className={`p-1 rounded ${useRegex ? 'bg-blue-500/20 text-blue-400' : 'text-slate-500 hover:text-white'}`} title="Use Regex"><Regex size={12}/></button>
+                   <input type="text" value={findText} onChange={(e) => setFindText(e.target.value)} placeholder="Find content..." className="w-full bg-slate-950 border border-white/10 rounded-lg pl-8 pr-20 py-1.5 text-xs text-white focus:border-blue-500 outline-none transition-all shadow-inner" autoFocus />
+                   <div className="absolute right-1 top-1 flex gap-0.5">
+                      <button onClick={() => setMatchCase(!matchCase)} className={`p-1 rounded ${matchCase ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/50' : 'text-slate-500 hover:text-white'}`} title="Match Case"><CaseSensitive size={12}/></button>
+                      <button onClick={() => setMatchWholeWord(!matchWholeWord)} className={`p-1 rounded ${matchWholeWord ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/50' : 'text-slate-500 hover:text-white'}`} title="Match Whole Word"><WholeWord size={12}/></button>
+                      <button onClick={() => setUseRegex(!useRegex)} className={`p-1 rounded ${useRegex ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/50' : 'text-slate-500 hover:text-white'}`} title="Use Regex"><Regex size={12}/></button>
                    </div>
                 </div>
                 <div className="flex-1 flex gap-2">
-                   <input type="text" value={replaceText} onChange={(e) => setReplaceText(e.target.value)} placeholder="Replace..." className="flex-1 bg-[#1e1e1e] border border-[#3e3e42] rounded px-2 py-1 text-xs text-white focus:border-blue-500 outline-none transition-all" />
-                   <button onClick={handleReplace} className="px-2 py-1 bg-[#333333] text-slate-300 text-xs font-medium rounded hover:bg-[#444444] hover:text-white border border-white/5 transition-colors">Replace</button>
-                   <button onClick={handleReplaceAll} className="px-2 py-1 bg-[#333333] text-slate-300 text-xs font-medium rounded hover:bg-[#444444] hover:text-white border border-white/5 transition-colors">All</button>
+                   <input type="text" value={replaceText} onChange={(e) => setReplaceText(e.target.value)} placeholder="Replace with..." className="flex-1 bg-slate-950 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white focus:border-blue-500 outline-none transition-all shadow-inner" />
+                   <button onClick={handleReplace} className="px-3 py-1 bg-slate-800 text-slate-300 text-xs font-bold rounded-lg hover:bg-slate-700 hover:text-white border border-white/5 transition-all shadow-sm">Replace</button>
+                   <button onClick={handleReplaceAll} className="px-3 py-1 bg-slate-800 text-slate-300 text-xs font-bold rounded-lg hover:bg-slate-700 hover:text-white border border-white/5 transition-all shadow-sm">All</button>
                 </div>
              </div>
            </div>
@@ -800,13 +799,13 @@ const Editor = forwardRef<EditorHandle, EditorProps>(({
       )}
 
       {/* Editor Content */}
-      <div ref={scrollContainerRef} onScroll={handleScroll} className={`flex-1 horizontal-scroll font-mono ${fontSizeClass} leading-6 relative bg-[#1e1e1e]`} onDoubleClick={handleDoubleClick}>
+      <div ref={scrollContainerRef} onScroll={handleScroll} className={`flex-1 horizontal-scroll font-mono ${fontSizeClass} leading-6 relative bg-[#020617]`} onDoubleClick={handleDoubleClick}>
         {isEditing ? (
           <textarea
             value={content}
             onChange={(e) => updateContentWithHistory(e.target.value)}
             onKeyDown={handleKeyDown}
-            className={`w-full h-full bg-[#1e1e1e] text-[#d4d4d4] p-6 resize-none outline-none font-mono ${wrapClass} selection:bg-blue-500/30 horizontal-scroll`}
+            className={`w-full h-full bg-[#020617] text-slate-200 p-6 resize-none outline-none font-mono ${wrapClass} selection:bg-blue-500/30 horizontal-scroll custom-scrollbar`}
             spellCheck={false}
           />
         ) : (
@@ -815,7 +814,6 @@ const Editor = forwardRef<EditorHandle, EditorProps>(({
                 {virtualItems.map((line) => {
                   const originalIndex = line.lineNumber - 1; 
                   const isFolded = collapsedLines.has(originalIndex);
-                  // Pass all errors for the line, not just severe ones
                   const errorsForLine = validationResult?.errors.filter(e => e.line === line.lineNumber) || [];
                   
                   return (

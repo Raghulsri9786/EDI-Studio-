@@ -1,5 +1,5 @@
 {
-  "name": "12 edi one",
+  "name": "EDI Studio",
   "description": "A professional tool to upload, visualize, and analyze Electronic Data Interchange (EDI) files (X12/EDIFACT) using Gemini AI. Get human-readable explanations and query your EDI documents instantly.",
   "requestFramePermissions": [
     "microphone"

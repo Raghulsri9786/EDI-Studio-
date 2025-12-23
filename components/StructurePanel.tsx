@@ -1,127 +1,100 @@
 
 import React, { useMemo } from 'react';
-import { Network } from 'lucide-react';
+import { ListTree, Hash, FileCode, Search, Info } from 'lucide-react';
 import { parseEdiToLines } from '../utils/ediParser';
-import { ParsedLine } from '../types';
+import { ParsedLine, ElementSchema } from '../types';
 
 interface StructurePanelProps {
   ediContent: string;
 }
 
-// Common X12 and EDIFACT segment definitions for tooltips
-const SEGMENT_DEFINITIONS: Record<string, string> = {
-  'ISA': 'Interchange Control Header',
-  'GS':  'Functional Group Header',
-  'ST':  'Transaction Set Header',
-  'BEG': 'Beginning Segment for Purchase Order',
-  'BIG': 'Beginning Segment for Invoice',
-  'BGM': 'Beginning of Message (EDIFACT)',
-  'N1':  'Name (Party Identification)',
-  'N2':  'Additional Name Information',
-  'N3':  'Address Information',
-  'N4':  'Geographic Location',
-  'REF': 'Reference Identification',
-  'DTM': 'Date/Time Reference',
-  'PO1': 'Baseline Item Data',
-  'LIN': 'Line Item (EDIFACT)',
-  'PID': 'Product/Item Description',
-  'SAC': 'Service, Promotion, Allowance, or Charge Information',
-  'TDS': 'Total Monetary Value Summary',
-  'CTT': 'Transaction Totals',
-  'SE':  'Transaction Set Trailer',
-  'GE':  'Functional Group Trailer',
-  'IEA': 'Interchange Control Trailer',
-  'UNB': 'Interchange Header (EDIFACT)',
-  'UNH': 'Message Header (EDIFACT)',
-  'UNT': 'Message Trailer (EDIFACT)',
-  'UNZ': 'Interchange Trailer (EDIFACT)',
-};
-
 const StructurePanel: React.FC<StructurePanelProps> = ({ ediContent }) => {
   const segments = useMemo(() => {
     if (!ediContent) return [];
-    
-    // Use the robust parser logic instead of simple splitting
-    const parsedLines = parseEdiToLines(ediContent);
-    
-    return parsedLines.map(line => {
-      // Extract tokens that are elements
-      const elements = line.tokens
-        .filter(t => t.type === 'ELEMENT')
-        .map(t => t.value);
-
-      return { 
-        id: line.segmentId, 
-        elements, 
-        raw: line.raw, 
-        index: line.lineNumber 
-      };
-    });
+    return parseEdiToLines(ediContent);
   }, [ediContent]);
 
   if (!ediContent) {
     return (
-      <div className="flex flex-col items-center justify-center h-full text-slate-400 p-8">
-        <Network size={48} className="mb-4 opacity-20" />
-        <p className="text-sm">No structure to display.</p>
+      <div className="flex flex-col items-center justify-center h-full text-slate-500 p-8 text-center">
+        <ListTree size={48} className="mb-4 opacity-10" />
+        <p className="text-sm font-medium">No data selected</p>
+        <p className="text-xs opacity-50 mt-2">Open an EDI file to view the hierarchical element breakdown.</p>
       </div>
     );
   }
 
   return (
-    <div className="h-full flex flex-col bg-slate-50">
-      <div className="p-4 bg-white border-b border-slate-200">
-        <h3 className="text-sm font-semibold text-slate-700 flex items-center gap-2">
-          <Network size={16} className="text-purple-600" />
-          Structural Breakdown
-        </h3>
-        <p className="text-xs text-slate-500 mt-1">
-          Auto-parsed segments. Hover over Segment IDs for definitions.
-        </p>
+    <div className="h-full flex flex-col bg-[#0d1117]">
+      <div className="p-4 border-b border-white/5 bg-[#161b22] flex items-center justify-between">
+        <div className="flex items-center gap-2">
+            <ListTree size={16} className="text-blue-400" />
+            <h3 className="text-xs font-bold text-slate-200 uppercase tracking-wider">Element Inspector</h3>
+        </div>
+        <span className="text-[10px] bg-blue-500/10 text-blue-400 px-2 py-0.5 rounded font-bold border border-blue-500/20">
+            {segments.length} Segments
+        </span>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-4 custom-scrollbar">
-        <div className="space-y-2">
-          {segments.map((seg) => (
+      <div className="flex-1 overflow-y-auto custom-scrollbar p-2">
+        <div className="space-y-4 pb-10">
+          {segments.map((line) => (
             <div 
-              key={seg.index} 
-              className="group flex items-start p-3 bg-white rounded-md border border-slate-200 hover:border-purple-300 hover:shadow-sm transition-all"
+              key={line.lineNumber} 
+              className="group rounded-xl border border-white/5 bg-white/[0.02] overflow-hidden hover:border-white/10 transition-all shadow-sm"
             >
-              {/* Line Number */}
-              <span className="text-xs font-mono text-slate-300 mr-3 mt-1 select-none w-6 text-right">
-                {seg.index}
-              </span>
-
-              <div className="flex-1">
-                {/* Segment Header */}
-                <div className="flex items-center gap-2 mb-1">
-                  <div className="relative">
-                    <span 
-                      className="font-bold font-mono text-purple-700 bg-purple-50 px-1.5 py-0.5 rounded text-sm cursor-help border border-purple-100"
-                      title={SEGMENT_DEFINITIONS[seg.id] || "Unknown Segment"}
-                    >
-                      {seg.id}
-                    </span>
-                  </div>
-                  {SEGMENT_DEFINITIONS[seg.id] && (
-                    <span className="text-xs text-slate-500 font-medium hidden sm:inline-block">
-                      — {SEGMENT_DEFINITIONS[seg.id]}
+              {/* Segment Header */}
+              <div className="px-3 py-2 bg-white/[0.03] border-b border-white/5 flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] font-mono text-slate-500 w-5">{line.lineNumber}</span>
+                  <span className="font-mono font-bold text-blue-400 text-sm">{line.segmentId}</span>
+                  {line.tokens[0]?.schema && (
+                    <span className="text-[10px] text-slate-400 truncate max-w-[180px]">
+                      — {(line.tokens[0].schema as any).name}
                     </span>
                   )}
                 </div>
+              </div>
 
-                {/* Elements */}
-                <div className="flex flex-wrap gap-1.5">
-                  {seg.elements.map((el, idx) => (
-                    <span 
-                      key={idx}
-                      className="font-mono text-xs bg-slate-100 text-slate-700 px-1.5 py-0.5 rounded border border-slate-200 hover:bg-slate-200 transition-colors break-all"
-                      title={`Element ${idx + 1}`}
-                    >
-                      {el}
-                    </span>
-                  ))}
-                </div>
+              {/* Elements List */}
+              <div className="divide-y divide-white/[0.03]">
+                {line.tokens.filter(t => t.type === 'ELEMENT').map((token) => {
+                  const schema = token.schema as ElementSchema | undefined;
+                  const isId = schema?.type === 'ID';
+                  const qualifierDesc = isId && schema?.qualifiers ? schema.qualifiers[token.value] : null;
+
+                  return (
+                    <div key={token.index} className="px-3 py-2 flex items-start gap-3 hover:bg-white/[0.02] transition-colors">
+                      <div className="flex-none w-10 text-[10px] font-mono text-slate-600 mt-0.5">
+                        {token.index < 10 ? `0${token.index}` : token.index}
+                      </div>
+                      
+                      <div className="flex-1 min-w-0">
+                         <div className="flex items-center justify-between gap-2 mb-0.5">
+                            <span className="text-[10px] font-bold text-slate-500 uppercase tracking-tight truncate">
+                                {schema?.name || 'Unknown Element'}
+                            </span>
+                            {schema?.type && (
+                                <span className="text-[9px] font-mono text-slate-600 uppercase border border-white/5 px-1 rounded flex-none">
+                                    {schema.type} {schema.min}-{schema.max}
+                                </span>
+                            )}
+                         </div>
+                         
+                         <div className="flex items-center gap-2">
+                            <span className={`font-mono text-xs ${token.value ? 'text-emerald-400' : 'text-slate-600 italic'}`}>
+                                {token.value || 'NULL'}
+                            </span>
+                            {qualifierDesc && (
+                                <span className="text-[10px] text-blue-400/80 font-medium truncate">
+                                    ({qualifierDesc})
+                                </span>
+                            )}
+                         </div>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           ))}

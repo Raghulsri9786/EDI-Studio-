@@ -1,6 +1,6 @@
 
 import React, { useMemo } from 'react';
-import { Edit3, Eye, Settings2 } from 'lucide-react';
+import { Edit3, Eye, Settings2, Activity } from 'lucide-react';
 import { EditorHandle, EditorState } from './Editor';
 import { animateButtonPress, animateButtonHover } from '../utils/gsapAnimations';
 import { detectDelimiters } from '../utils/ediDetection';
@@ -10,9 +10,10 @@ interface EditorToolbarProps {
   editorState: EditorState;
   isBusinessView?: boolean;
   ediContent?: string;
+  onValidate?: () => void;
 }
 
-const EditorToolbar: React.FC<EditorToolbarProps> = ({ editorRef, editorState, isBusinessView, ediContent }) => {
+const EditorToolbar: React.FC<EditorToolbarProps> = ({ editorRef, editorState, isBusinessView, ediContent, onValidate }) => {
   
   const delimiters = useMemo(() => {
     if (!ediContent) return null;
@@ -31,7 +32,6 @@ const EditorToolbar: React.FC<EditorToolbarProps> = ({ editorRef, editorState, i
     animateButtonHover(e.currentTarget, false);
   };
 
-  // Helper to display invisible chars like newline
   const formatChar = (char: string) => {
     if (char === '\n' || char === '\r\n') return '↵';
     if (char === '\r') return 'CR';
@@ -40,7 +40,7 @@ const EditorToolbar: React.FC<EditorToolbarProps> = ({ editorRef, editorState, i
     return char;
   };
 
-  const ActionButton = ({ onClick, disabled, active, title, children }: any) => (
+  const ActionButton = ({ onClick, disabled, active, title, children, className = "" }: any) => (
     <button 
         onClick={(e) => { onClick && onClick(); handleInteraction(e); }}
         onMouseEnter={handleMouseEnter}
@@ -51,6 +51,7 @@ const EditorToolbar: React.FC<EditorToolbarProps> = ({ editorRef, editorState, i
             p-1.5 rounded-lg transition-colors flex items-center justify-center
             ${active ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-400 hover:text-white hover:bg-white/5'} 
             ${disabled ? 'opacity-30 cursor-not-allowed' : ''}
+            ${className}
         `}
     >
         {children}
@@ -73,7 +74,6 @@ const EditorToolbar: React.FC<EditorToolbarProps> = ({ editorRef, editorState, i
                 </div>
             </div>
             
-            {/* Minimal Tooltip */}
             <div className="absolute top-full right-0 mt-2 w-48 bg-slate-800 border border-white/10 rounded-lg shadow-xl p-3 opacity-0 group-hover:opacity-100 pointer-events-none transition-all z-50 text-xs">
                 <div className="font-bold text-slate-300 mb-2 border-b border-white/5 pb-1 flex items-center gap-2">
                     <Settings2 size={12} /> Structure
@@ -90,13 +90,17 @@ const EditorToolbar: React.FC<EditorToolbarProps> = ({ editorRef, editorState, i
         </div>
       )}
 
-      {/* View Toggles */}
+      {/* Action Toggles */}
       <div className="bg-slate-800/50 rounded-lg p-0.5 border border-white/5 flex gap-0.5">
          <ActionButton onClick={() => editorRef.current?.toggleEditMode()} active={editorState.isEditing && !isBusinessView} title="Source Code (Edit)" disabled={isBusinessView}>
             <Edit3 size={14} />
          </ActionButton>
          <ActionButton onClick={() => editorRef.current?.toggleEditMode()} active={!editorState.isEditing && !isBusinessView} title="Visual Viewer" disabled={!editorState.isEdiMode || isBusinessView}>
             <Eye size={14} />
+         </ActionButton>
+         <div className="w-px h-4 bg-white/10 my-auto mx-0.5" />
+         <ActionButton onClick={onValidate} active={false} title="Validate EDI" className="hover:text-emerald-400">
+            <Activity size={14} />
          </ActionButton>
       </div>
     </div>

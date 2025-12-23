@@ -105,6 +105,8 @@ const calculateStats = (segments: AlignedSegment[]) => {
     return { added, removed, modified };
 };
 
+type CompareItem = AlignedSegment | { status: 'COLLAPSED'; count: number };
+
 const CompareView: React.FC<CompareViewProps> = ({ files = [] }) => {
   const [textA, setTextA] = useState('');
   const [textB, setTextB] = useState('');
@@ -234,44 +236,60 @@ ${structDiffResult ?
   };
 
   // --- Filtering & Processing ---
-  const filteredSegments = useMemo(() => {
+  const filteredSegments = useMemo((): CompareItem[] => {
     if (!structDiffResult) return [];
     
-    let processed = structDiffResult.alignedSegments;
+    let processed: CompareItem[] = structDiffResult.alignedSegments;
 
     // 1. Segment Filter
     if (segmentFilter !== 'ALL') {
         processed = processed.filter(s => 
-            (s.left?.id === segmentFilter) || (s.right?.id === segmentFilter)
+            (s.status !== 'COLLAPSED' && ((s as AlignedSegment).left?.id === segmentFilter || (s as AlignedSegment).right?.id === segmentFilter))
         );
     }
 
     // 2. Diffs Only Filter (with context collapsing)
     if (viewFilter === 'DIFFS_ONLY') {
-        const visible: any[] = [];
+        const visible: CompareItem[] = [];
+        const source = processed as AlignedSegment[]; // Prior to this step, processed is pure AlignedSegment[]
         const context = 2;
         let i = 0;
-        while (i < processed.length) {
-            const isDiff = processed[i].status !== 'MATCH' || pinnedSegments.has(processed[i].left?.id || processed[i].right?.id || '');
+        while (i < source.length) {
+            const isDiff = source[i].status !== 'MATCH' || pinnedSegments.has(source[i].left?.id || source[i].right?.id || '');
             
             if (isDiff) {
                 const start = Math.max(0, i - context);
                 // Spacer
-                if (visible.length > 0 && processed.indexOf(visible[visible.length-1]) < start - 1) {
-                    const skipped = start - (processed.indexOf(visible[visible.length-1]) + 1);
+                // We check if the last item in visible was an AlignedSegment and calculate gap
+                // If the last item was COLLAPSED, we assume we are just appending another collapsed or adjacent block?
+                // Logic: Find index of last added segment in source
+                
+                let lastSourceIndex = -1;
+                for (let v = visible.length - 1; v >= 0; v--) {
+                    if (visible[v].status !== 'COLLAPSED') {
+                        lastSourceIndex = source.indexOf(visible[v] as AlignedSegment);
+                        break;
+                    }
+                }
+
+                if (lastSourceIndex !== -1 && lastSourceIndex < start - 1) {
+                    const skipped = start - (lastSourceIndex + 1);
                     if (skipped > 0) visible.push({ status: 'COLLAPSED', count: skipped });
+                } else if (visible.length === 0 && start > 0) {
+                    visible.push({ status: 'COLLAPSED', count: start });
                 }
                 
                 let j = i;
-                while (j < processed.length) {
-                    const nextIsDiff = processed[j].status !== 'MATCH' || pinnedSegments.has(processed[j].left?.id || processed[j].right?.id || '');
+                while (j < source.length) {
+                    const nextIsDiff = source[j].status !== 'MATCH' || pinnedSegments.has(source[j].left?.id || source[j].right?.id || '');
                     if (nextIsDiff) i = j;
                     else if (j > i + context) break;
                     j++;
                 }
                 
-                for (let k = start; k < Math.min(processed.length, j); k++) {
-                    if (!visible.includes(processed[k])) visible.push(processed[k]);
+                for (let k = start; k < Math.min(source.length, j); k++) {
+                    // Avoid duplicates if ranges overlap
+                    if (!visible.includes(source[k])) visible.push(source[k]);
                 }
                 i = j;
             } else {
@@ -437,21 +455,22 @@ ${structDiffResult ?
                         <div ref={leftPanelRef} className="flex-1 horizontal-scroll border-r border-white/5 bg-[#0f111a] relative pb-20">
                             <FileHeader filename={fileAName} icon={<FileText size={14} className="text-blue-400" />} type="REM" count={stats.removed} />
                             {filteredSegments.map((row, i) => {
-                                if (row.status === 'COLLAPSED') return <CollapsedRow key={i} count={row.count} onClick={() => setViewFilter('ALL')} />;
-                                const style = row.status === 'LEFT_ONLY' ? `diff-removed ${DIFF_STYLES.REMOVED}` : 
-                                              row.status === 'MODIFIED' ? `diff-modified ${DIFF_STYLES.MODIFIED}` : 
-                                              row.status === 'RIGHT_ONLY' ? DIFF_STYLES.EMPTY : DIFF_STYLES.SAME;
-                                const isPinned = row.left && pinnedSegments.has(row.left.id);
+                                if (row.status === 'COLLAPSED') return <CollapsedRow key={i} count={(row as any).count} onClick={() => setViewFilter('ALL')} />;
+                                const segRow = row as AlignedSegment;
+                                const style = segRow.status === 'LEFT_ONLY' ? `diff-removed ${DIFF_STYLES.REMOVED}` : 
+                                              segRow.status === 'MODIFIED' ? `diff-modified ${DIFF_STYLES.MODIFIED}` : 
+                                              segRow.status === 'RIGHT_ONLY' ? DIFF_STYLES.EMPTY : DIFF_STYLES.SAME;
+                                const isPinned = segRow.left && pinnedSegments.has(segRow.left.id);
                                 return (
                                     <div key={i} className={`${style} min-w-max`}>
                                         <EdiSegmentRow 
-                                            segment={row.left} 
-                                            diffs={row.diffs} 
-                                            showPin={!!row.left}
+                                            segment={segRow.left} 
+                                            diffs={segRow.diffs} 
+                                            showPin={!!segRow.left}
                                             pinned={isPinned}
-                                            onTogglePin={() => row.left && setPinnedSegments(prev => {
+                                            onTogglePin={() => segRow.left && setPinnedSegments(prev => {
                                                 const next = new Set(prev);
-                                                next.has(row.left!.id) ? next.delete(row.left!.id) : next.add(row.left!.id);
+                                                next.has(segRow.left!.id) ? next.delete(segRow.left!.id) : next.add(segRow.left!.id);
                                                 return next;
                                             })}
                                         />
@@ -462,13 +481,14 @@ ${structDiffResult ?
                         <div ref={rightPanelRef} className="flex-1 horizontal-scroll bg-[#0f111a] relative pb-20">
                             <FileHeader filename={fileBName} icon={<FileText size={14} className="text-emerald-400" />} type="ADD" count={stats.added} />
                             {filteredSegments.map((row, i) => {
-                                if (row.status === 'COLLAPSED') return <CollapsedRow key={i} count={row.count} onClick={() => setViewFilter('ALL')} />;
-                                const style = row.status === 'RIGHT_ONLY' ? `diff-added ${DIFF_STYLES.ADDED}` : 
-                                              row.status === 'MODIFIED' ? `diff-modified ${DIFF_STYLES.MODIFIED}` : 
-                                              row.status === 'LEFT_ONLY' ? DIFF_STYLES.EMPTY : DIFF_STYLES.SAME;
+                                if (row.status === 'COLLAPSED') return <CollapsedRow key={i} count={(row as any).count} onClick={() => setViewFilter('ALL')} />;
+                                const segRow = row as AlignedSegment;
+                                const style = segRow.status === 'RIGHT_ONLY' ? `diff-added ${DIFF_STYLES.ADDED}` : 
+                                              segRow.status === 'MODIFIED' ? `diff-modified ${DIFF_STYLES.MODIFIED}` : 
+                                              segRow.status === 'LEFT_ONLY' ? DIFF_STYLES.EMPTY : DIFF_STYLES.SAME;
                                 return (
                                     <div key={i} className={`${style} min-w-max`}>
-                                        <EdiSegmentRow segment={row.right} diffs={row.diffs} />
+                                        <EdiSegmentRow segment={segRow.right} diffs={segRow.diffs} />
                                     </div>
                                 );
                             })}
@@ -479,21 +499,22 @@ ${structDiffResult ?
                     <div ref={inlinePanelRef} className="flex-1 horizontal-scroll bg-[#0f111a] relative pb-20 max-w-4xl mx-auto border-x border-white/5">
                         <div className="sticky top-0 z-20 bg-slate-900 border-b border-white/10 px-4 py-2 text-xs font-bold text-slate-400 min-w-max">Inline Comparison</div>
                         {filteredSegments.map((row, i) => {
-                            if (row.status === 'COLLAPSED') return <CollapsedRow key={i} count={row.count} onClick={() => setViewFilter('ALL')} />;
+                            if (row.status === 'COLLAPSED') return <CollapsedRow key={i} count={(row as any).count} onClick={() => setViewFilter('ALL')} />;
                             
+                            const segRow = row as AlignedSegment;
                             return (
                                 <div key={i} className="border-b border-white/5 min-w-max">
-                                    {row.status === 'MATCH' && (
-                                        <div className={DIFF_STYLES.SAME}><EdiSegmentRow segment={row.left} /></div>
+                                    {segRow.status === 'MATCH' && (
+                                        <div className={DIFF_STYLES.SAME}><EdiSegmentRow segment={segRow.left} /></div>
                                     )}
-                                    {(row.status === 'LEFT_ONLY' || row.status === 'MODIFIED') && row.left && (
+                                    {(segRow.status === 'LEFT_ONLY' || segRow.status === 'MODIFIED') && segRow.left && (
                                         <div className={`diff-removed ${DIFF_STYLES.REMOVED}`}>
-                                            <EdiSegmentRow segment={row.left} diffs={row.diffs} />
+                                            <EdiSegmentRow segment={segRow.left} diffs={segRow.diffs} />
                                         </div>
                                     )}
-                                    {(row.status === 'RIGHT_ONLY' || row.status === 'MODIFIED') && row.right && (
+                                    {(segRow.status === 'RIGHT_ONLY' || segRow.status === 'MODIFIED') && segRow.right && (
                                         <div className={`diff-added ${DIFF_STYLES.ADDED}`}>
-                                            <EdiSegmentRow segment={row.right} diffs={row.diffs} />
+                                            <EdiSegmentRow segment={segRow.right} diffs={segRow.diffs} />
                                         </div>
                                     )}
                                 </div>

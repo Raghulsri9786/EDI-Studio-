@@ -17,14 +17,15 @@ export const validationOrchestrator = {
       useAi: boolean; 
       useStedi?: boolean; 
       stediConfig?: any;
-      activeRuleSets?: TPRuleSet[] // New option for active TP rules
+      activeRuleSets?: TPRuleSet[];
+      aiProvider?: 'gemini' | 'deepseek';
     }
   ): Promise<OrchestratedResult> {
     
     const issues: ValidationIssue[] = [];
+    const provider = options.aiProvider || 'gemini';
     
     // 1. Local Syntax Validation (Fast, Deterministic)
-    // Covers Envelope, Segment Order, Data Types (Level A)
     const localResult = validateRealTime(ediContent);
     localResult.errors.forEach(err => {
       issues.push({
@@ -36,8 +37,7 @@ export const validationOrchestrator = {
       });
     });
 
-    // 2. Trading Partner Rules (Level C)
-    // Checks specific constraints from loaded Specs
+    // 2. Trading Partner Rules
     if (options.activeRuleSets && options.activeRuleSets.length > 0) {
         options.activeRuleSets.forEach(set => {
             if (!set.isActive) return;
@@ -46,10 +46,10 @@ export const validationOrchestrator = {
         });
     }
 
-    // 3. AI Logic Validation (Context Aware - Level B)
+    // 3. AI Logic Validation (Context Aware)
     if (options.useAi) {
       try {
-        const aiErrors = await validateEdiContent(ediContent);
+        const aiErrors = await validateEdiContent(ediContent, provider);
         if (aiErrors && aiErrors.length > 0) {
           aiErrors.forEach(err => {
              issues.push({
@@ -58,8 +58,8 @@ export const validationOrchestrator = {
                severity: 'ERROR',
                source: 'AI',
                line: err.line,
-               segmentId: (err as any).segment, // Mapping from AI field
-               elementId: (err as any).element, // Mapping from AI field
+               segmentId: (err as any).segment,
+               elementId: (err as any).element,
                suggestion: err.fix,
                explanation: err.explanation,
                reason: err.reason,
@@ -72,7 +72,7 @@ export const validationOrchestrator = {
       }
     }
 
-    // 4. Stedi Validation (Strict External Schema)
+    // 4. Stedi Validation
     if (options.useStedi && options.stediConfig?.apiKey) {
        const stediService = new StediValidationService(
            options.stediConfig.apiKey, 
@@ -88,7 +88,7 @@ export const validationOrchestrator = {
     const warningCount = issues.filter(i => i.severity === 'WARNING').length;
     
     let score = 100 - (errorCount * 10) - (warningCount * 2);
-    score = Math.max(0, score); // Clamp to 0
+    score = Math.max(0, score);
 
     return {
       isValid: errorCount === 0,

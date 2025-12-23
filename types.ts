@@ -111,7 +111,7 @@ export enum AppMode {
   AI_STUDIO = 'AI_STUDIO',
 }
 
-export type PanelTab = 'chat' | 'validate' | 'tools' | 'json' | 'rules';
+export type PanelTab = 'chat' | 'validate' | 'tools' | 'json' | 'rules' | 'structure';
 
 export interface ComparisonResult {
   diffAnalysis: string;

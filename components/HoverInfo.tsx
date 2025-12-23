@@ -1,11 +1,9 @@
-
 import React, { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { Sparkles, Pin, X, BookOpen, Check, RefreshCw } from 'lucide-react';
+import { Sparkles, Pin, X, BookOpen, Check, RefreshCw, FileJson } from 'lucide-react';
 import { ElementSchema, SegmentSchema, EdiToken } from '../types';
 import { GoogleGenAI } from "@google/genai";
 import { useSmartPopupPosition } from '../hooks/useSmartPopupPosition';
-import { hasValidApiKey, getGeminiKey } from '../services/geminiService';
 
 // Static cache to store AI explanations during the session for instant recall
 const explanationCache = new Map<string, string>();
@@ -56,11 +54,10 @@ const HoverInfo: React.FC<HoverInfoProps> = ({
     qualifierDesc = schema.qualifiers[token.value];
   }
 
-  const stediUrl = `https://www.stedi.com/edi/x12/segment/${segmentId}`;
+  const referenceUrl = `https://ediacademy.com/blog/x12-${segmentId.toLowerCase()}-segment/`;
+  const schemaUrl = `https://www.stedi.com/edi/x12/segment/${segmentId}`;
 
   const handleAiExplain = async (force: boolean = false) => {
-    if (!hasValidApiKey()) return;
-    
     const cacheKey = `${segmentId}:${token.fullId || 'SEG'}:${token.value}`;
     
     if (!force && explanationCache.has(cacheKey)) {
@@ -78,10 +75,8 @@ const HoverInfo: React.FC<HoverInfoProps> = ({
     if(force) setAiExplanation(null);
     
     try {
-      const apiKey = getGeminiKey();
-      if (!apiKey) throw new Error("Key Missing");
-
-      const ai = new GoogleGenAI({ apiKey });
+      // Use process.env.API_KEY directly
+      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
       
       const prompt = `
       Write exactly ONE short sentence (under 15 words) explaining the BUSINESS meaning of this EDI value.
@@ -96,7 +91,7 @@ const HoverInfo: React.FC<HoverInfoProps> = ({
       `;
 
       const response = await ai.models.generateContent({
-        model: 'gemini-2.5-flash',
+        model: 'gemini-3-flash-preview',
         contents: prompt
       });
       
@@ -148,11 +143,11 @@ const HoverInfo: React.FC<HoverInfoProps> = ({
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}
       className={`fixed z-[99999] 
-        bg-[#0f172a] 
-        border border-blue-500/30 rounded-lg 
-        shadow-2xl shadow-black/60
+        bg-[#0d1117] 
+        border border-white/10 rounded-xl 
+        shadow-[0_20px_50px_rgba(0,0,0,0.5)]
         font-sans text-slate-200
-        w-[380px] overflow-hidden
+        w-[400px] overflow-hidden
         pointer-events-auto
         transition-opacity duration-150 ease-out
       `}
@@ -162,26 +157,20 @@ const HoverInfo: React.FC<HoverInfoProps> = ({
         opacity: opacity,
       }}
     >
-      {/* 1. Header Layer: ID • Type • Value Lading Quantity */}
-      <div className="px-3 py-1.5 bg-slate-900/90 border-b border-white/10 flex items-center justify-between">
+      {/* 1. Header Layer */}
+      <div className="px-4 py-2.5 bg-[#161b22] border-b border-white/10 flex items-center justify-between">
         <div className="flex items-center gap-2 overflow-hidden text-xs leading-none w-full">
-             {/* ID */}
-             <span className="font-bold text-white font-mono flex-none">{displayId}</span>
+             <span className="font-bold text-blue-400 font-mono flex-none bg-blue-500/10 px-1.5 py-0.5 rounded">{displayId}</span>
              
-             {/* Type */}
              {schema?.type && (
-               <>
-                 <span className="text-slate-600 flex-none">•</span>
-                 <span className="font-mono text-[10px] text-slate-500 flex-none uppercase">{schema.type} {schema.min}-{schema.max}</span>
-               </>
+               <span className="font-mono text-[10px] text-slate-500 flex-none uppercase border border-white/5 px-1 rounded">{schema.type} {schema.min}-{schema.max}</span>
              )}
 
-             {/* Value */}
              {!isSegment && token.value && (
                 <>
                   <span className="text-slate-600 flex-none">•</span>
                   <span 
-                    className="font-mono font-bold text-cyan-400 flex-none truncate max-w-[100px] cursor-pointer hover:underline" 
+                    className="font-mono font-bold text-emerald-400 flex-none truncate max-w-[120px] cursor-pointer hover:underline" 
                     title="Click to copy"
                     onClick={handleCopyValue}
                   >
@@ -191,65 +180,78 @@ const HoverInfo: React.FC<HoverInfoProps> = ({
                 </>
              )}
              
-             {/* Description */}
-             <span className="text-slate-600 flex-none mx-1">-</span>
-             <span className="text-slate-300 truncate font-medium text-[11px]" title={description}>{description}</span>
+             <span className="text-slate-500 flex-none mx-1">—</span>
+             <span className="text-slate-300 truncate font-semibold text-[11px]" title={description}>{description}</span>
         </div>
         
-        {/* Controls */}
         <div className="flex items-center gap-1 flex-none ml-2">
           <button 
             onClick={onPin}
-            className={`p-1 rounded transition-colors ${isPinned ? 'text-blue-400 bg-blue-500/10' : 'text-slate-600 hover:text-white hover:bg-white/10'}`}
+            className={`p-1.5 rounded-lg transition-all ${isPinned ? 'text-blue-400 bg-blue-500/20 shadow-[inset_0_0_8px_rgba(59,130,246,0.2)]' : 'text-slate-500 hover:text-white hover:bg-white/5'}`}
           >
-            <Pin size={12} className={isPinned ? "fill-current" : ""} />
+            <Pin size={14} className={isPinned ? "fill-current" : ""} />
           </button>
           {isPinned && onClose && (
-            <button onClick={onClose} className="p-1 text-slate-600 hover:text-white hover:bg-white/10 rounded transition-colors">
-              <X size={12} />
+            <button onClick={onClose} className="p-1.5 text-slate-500 hover:text-white hover:bg-white/5 rounded-lg transition-colors">
+              <X size={14} />
             </button>
           )}
         </div>
       </div>
 
-      {/* 2. Business Insight & Links Layer */}
-      <div className="px-3 py-2 bg-[#0b1120]">
-         <div className="flex items-baseline gap-2 mb-0.5">
-            <span className="text-[10px] font-bold text-indigo-400 uppercase tracking-wide flex-none">
-               Business Insight:
+      {/* 2. Business Insight Layer */}
+      <div className="px-4 py-3 bg-[#0d1117]">
+         <div className="flex items-center gap-2 mb-2">
+            <span className="text-[10px] font-bold text-indigo-400 uppercase tracking-widest flex items-center gap-1.5">
+               <Sparkles size={10} /> Business Insight
             </span>
             <button 
                 onClick={(e) => { e.stopPropagation(); handleAiExplain(true); }}
-                className="ml-auto text-slate-600 hover:text-indigo-400 transition-colors"
-                title="Regenerate"
+                className="ml-auto p-1 text-slate-600 hover:text-blue-400 transition-colors bg-white/5 rounded"
+                title="Refresh Insight"
             >
-                <RefreshCw size={9} className={loadingAi ? "animate-spin" : ""} />
+                <RefreshCw size={10} className={loadingAi ? "animate-spin" : ""} />
             </button>
          </div>
          
-         <div className="text-xs text-slate-300 leading-snug">
+         <div className="text-xs text-slate-300 leading-relaxed mb-4 min-h-[1.5rem]">
              {loadingAi ? (
-               <span className="animate-pulse text-slate-500">Analysing context...</span>
+               <span className="animate-pulse text-slate-600 italic">Thinking...</span>
              ) : (
                <>
-                 {aiExplanation || <span className="text-slate-500 italic">No insight available.</span>}
-                 {qualifierDesc && <span className="text-emerald-400 ml-1">({qualifierDesc})</span>}
+                 {aiExplanation || <span className="text-slate-600 italic">No business context available.</span>}
+                 {qualifierDesc && <span className="text-blue-400 font-bold ml-1">({qualifierDesc})</span>}
                </>
              )}
-             
-             {/* Merged Footer Links */}
-             <span className="inline-block ml-3">
-               <span className="text-slate-600 mr-2">•</span>
-               <a href={stediUrl} target="_blank" rel="noreferrer" className="text-[10px] text-blue-500 hover:text-blue-300 hover:underline">Standard Reference</a>
-               <span className="text-slate-600 mx-2">•</span>
-               <a href={stediUrl} target="_blank" rel="noreferrer" className="text-[10px] text-blue-500 hover:text-blue-300 hover:underline">View Schema</a>
-             </span>
+         </div>
+
+         {/* 3. Footer Actions (Standard Ref & View Schema) */}
+         <div className="flex items-center gap-2 pt-3 border-t border-white/5">
+            <a 
+              href={referenceUrl} 
+              target="_blank" 
+              rel="noreferrer" 
+              className="flex-1 flex items-center justify-center gap-1.5 py-2 px-3 bg-slate-800/50 hover:bg-slate-700 text-[10px] font-bold text-slate-300 rounded-lg transition-all border border-white/5 hover:text-white"
+            >
+              <BookOpen size={12} /> Standard Reference
+            </a>
+            <a 
+              href={schemaUrl} 
+              target="_blank" 
+              rel="noreferrer" 
+              className="flex-1 flex items-center justify-center gap-1.5 py-2 px-3 bg-blue-600/10 hover:bg-blue-600/20 text-[10px] font-bold text-blue-400 rounded-lg transition-all border border-blue-500/20 hover:text-blue-300"
+            >
+              <FileJson size={12} /> View Schema
+            </a>
          </div>
 
          {/* Validation Error Inline */}
          {validationError && (
-            <div className="mt-2 text-[10px] text-red-300 bg-red-500/10 border border-red-500/20 rounded px-2 py-1 flex items-start gap-1">
-               <span className="font-bold">Error:</span> {validationError}
+            <div className="mt-3 text-[10px] text-red-300 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2 flex items-start gap-2">
+               <X size={12} className="text-red-500 mt-0.5 flex-none" />
+               <div>
+                  <span className="font-bold text-red-400">Structural Issue:</span> {validationError}
+               </div>
             </div>
          )}
       </div>

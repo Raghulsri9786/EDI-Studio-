@@ -1,8 +1,7 @@
-
 import React, { useLayoutEffect, useRef, useState } from 'react';
-import { Activity, AlertTriangle, CheckCircle, AlertOctagon, ShieldCheck, ArrowUpRight, Sparkles, Loader2, ArrowRight } from 'lucide-react';
+import { Activity, AlertTriangle, CheckCircle, AlertOctagon, ShieldCheck, ArrowUpRight, Sparkles, Loader2, RefreshCw } from 'lucide-react';
 import { OrchestratedResult, ValidationIssue, FixResult } from '../types';
-import { generateEdiFix, hasValidApiKey } from '../services/geminiService';
+import { generateEdiFix } from '../services/geminiService';
 
 interface HealthDashboardProps {
   result: OrchestratedResult | null;
@@ -10,6 +9,7 @@ interface HealthDashboardProps {
   activeFileContent?: string;
   onJumpToLine?: (line: number) => void;
   onApplyFix?: (line: number, newSegment: string) => void;
+  onRefresh?: () => void;
 }
 
 const HealthDashboard: React.FC<HealthDashboardProps> = ({ 
@@ -17,19 +17,18 @@ const HealthDashboard: React.FC<HealthDashboardProps> = ({
   isValidating, 
   activeFileContent = '', 
   onJumpToLine, 
-  onApplyFix 
+  onApplyFix,
+  onRefresh
 }) => {
   const scoreRef = useRef<HTMLDivElement>(null);
   const barRef = useRef<HTMLDivElement>(null);
   
-  // Fix State
   const [fixingIssueIndex, setFixingIssueIndex] = useState<number | null>(null);
   const [fixResult, setFixResult] = useState<FixResult | null>(null);
   const [isGeneratingFix, setIsGeneratingFix] = useState(false);
 
   useLayoutEffect(() => {
     if (result && scoreRef.current && window.gsap) {
-      // Animate Score Counter
       window.gsap.fromTo(scoreRef.current, 
         { innerText: 0 }, 
         { 
@@ -40,7 +39,6 @@ const HealthDashboard: React.FC<HealthDashboardProps> = ({
         }
       );
       
-      // Animate Progress Bar
       if (barRef.current) {
           window.gsap.fromTo(barRef.current,
             { width: "0%" },
@@ -53,7 +51,6 @@ const HealthDashboard: React.FC<HealthDashboardProps> = ({
   const handleFixClick = async (idx: number, issue: ValidationIssue) => {
     if (!activeFileContent || !issue.line) return;
     
-    // Toggle off if clicking same
     if (fixingIssueIndex === idx) {
         setFixingIssueIndex(null);
         setFixResult(null);
@@ -65,12 +62,10 @@ const HealthDashboard: React.FC<HealthDashboardProps> = ({
     setFixResult(null);
 
     try {
-        // Extract context lines
         const lines = activeFileContent.split(/\r?\n/);
         const lineIndex = issue.line - 1;
         const segment = lines[lineIndex];
         
-        // Context: 5 lines before and after
         const start = Math.max(0, lineIndex - 5);
         const end = Math.min(lines.length, lineIndex + 5);
         const context = lines.slice(start, end).join('\n');
@@ -94,9 +89,13 @@ const HealthDashboard: React.FC<HealthDashboardProps> = ({
 
   if (isValidating) {
     return (
-      <div className="p-6 bg-slate-900/50 rounded-xl border border-white/5 animate-pulse flex flex-col items-center justify-center h-48">
-         <Activity className="text-blue-500 mb-2 animate-spin" size={32} />
-         <span className="text-sm text-slate-400">Running Comprehensive Validation...</span>
+      <div className="p-6 bg-slate-900/50 rounded-xl border border-white/5 flex flex-col items-center justify-center h-64 text-center">
+         <div className="relative mb-4">
+             <Activity className="text-blue-500 animate-spin relative z-10" size={48} />
+             <div className="absolute inset-0 bg-blue-500/20 blur-xl rounded-full animate-pulse"></div>
+         </div>
+         <span className="text-sm font-bold text-slate-200">Running Comprehensive Validation</span>
+         <p className="text-xs text-slate-500 mt-2 max-w-[200px]">Checking envelopes, segment order, data types, and AI insights...</p>
       </div>
     );
   }
@@ -115,18 +114,14 @@ const HealthDashboard: React.FC<HealthDashboardProps> = ({
     return 'bg-red-500';
   };
 
-  const canUseAi = hasValidApiKey();
-
   return (
-    <div className="space-y-6">
-      {/* Header Card */}
+    <div className="space-y-6 pb-20">
       <div className="bg-slate-800/50 backdrop-blur-md rounded-2xl p-6 border border-white/5 shadow-xl relative overflow-hidden">
          <div className="absolute top-0 right-0 p-4 opacity-10">
             <ShieldCheck size={120} />
          </div>
          
          <div className="flex items-center gap-6 relative z-10">
-            {/* Score Circle */}
             <div className="relative w-24 h-24 flex items-center justify-center">
                <svg className="w-full h-full" viewBox="0 0 36 36">
                   <path
@@ -153,11 +148,16 @@ const HealthDashboard: React.FC<HealthDashboardProps> = ({
             </div>
 
             <div className="flex-1">
-               <h3 className="text-lg font-bold text-white mb-1">
-                 {result.score === 100 ? "Excellent Compliance" : (result.score > 70 ? "Needs Attention" : "Critical Issues Found")}
-               </h3>
-               <p className="text-xs text-slate-400 mb-4">
-                 Validation complete. Found {result.metrics.errorCount} errors and {result.metrics.warningCount} warnings across {result.metrics.segmentCount} segments.
+               <div className="flex items-center justify-between mb-1">
+                   <h3 className="text-lg font-bold text-white">
+                     {result.score === 100 ? "Valid Document" : (result.score > 70 ? "Minor Issues" : "Critical Failures")}
+                   </h3>
+                   <button onClick={onRefresh} className="p-1.5 hover:bg-white/10 rounded-lg text-slate-500 hover:text-blue-400 transition-all" title="Re-validate">
+                        <RefreshCw size={14} />
+                   </button>
+               </div>
+               <p className="text-xs text-slate-400 mb-4 leading-relaxed">
+                 {result.metrics.errorCount} structural errors and {result.metrics.warningCount} data warnings detected.
                </p>
                
                <div className="w-full h-1.5 bg-slate-700 rounded-full overflow-hidden">
@@ -167,98 +167,105 @@ const HealthDashboard: React.FC<HealthDashboardProps> = ({
          </div>
       </div>
 
-      {/* Metrics Grid */}
       <div className="grid grid-cols-3 gap-3">
          <div className="bg-red-950/20 border border-red-500/20 p-3 rounded-xl flex flex-col items-center text-center">
             <AlertOctagon size={20} className="text-red-500 mb-1" />
             <span className="text-xl font-bold text-red-400">{result.metrics.errorCount}</span>
-            <span className="text-[10px] text-red-300 uppercase">Critical</span>
+            <span className="text-[10px] text-red-300 uppercase font-bold">Errors</span>
          </div>
          <div className="bg-amber-950/20 border border-amber-500/20 p-3 rounded-xl flex flex-col items-center text-center">
             <AlertTriangle size={20} className="text-amber-500 mb-1" />
             <span className="text-xl font-bold text-amber-400">{result.metrics.warningCount}</span>
-            <span className="text-[10px] text-amber-300 uppercase">Warnings</span>
+            <span className="text-[10px] text-amber-300 uppercase font-bold">Warnings</span>
          </div>
-         <div className="bg-emerald-950/20 border border-emerald-500/20 p-3 rounded-xl flex flex-col items-center text-center">
-            <CheckCircle size={20} className="text-emerald-500 mb-1" />
-            <span className="text-xl font-bold text-emerald-400">{result.issues.filter(i => i.severity === 'INFO').length}</span>
-            <span className="text-[10px] text-emerald-300 uppercase">Passed Checks</span>
+         <div className="bg-slate-800 border border-white/10 p-3 rounded-xl flex flex-col items-center text-center">
+            <Activity size={20} className="text-blue-400 mb-1" />
+            <span className="text-xl font-bold text-slate-200">{result.metrics.segmentCount}</span>
+            <span className="text-[10px] text-slate-500 uppercase font-bold">Segments</span>
          </div>
       </div>
 
-      {/* Issue List */}
       <div className="space-y-2">
-         <h4 className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-3">Detailed Findings</h4>
+         <h4 className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-3 flex items-center justify-between">
+             Detailed Findings
+             <span className="text-[10px] bg-slate-800 px-2 py-0.5 rounded text-slate-400">{result.issues.length} Issues</span>
+         </h4>
+         
          {result.issues.length === 0 ? (
-            <div className="p-4 text-center text-slate-500 text-xs italic bg-slate-800/30 rounded-lg">No issues detected.</div>
+            <div className="flex flex-col items-center justify-center p-8 text-center bg-emerald-500/5 border border-emerald-500/10 rounded-2xl">
+                <CheckCircle size={32} className="text-emerald-500 mb-3" />
+                <p className="text-sm font-bold text-emerald-400">Compliance Verified</p>
+                <p className="text-xs text-slate-500 mt-1">No structural or syntax issues found.</p>
+            </div>
          ) : (
             result.issues.filter(i => i.severity !== 'INFO').map((issue, idx) => (
-               <div key={idx} className={`p-3 rounded-lg border text-xs transition-all ${issue.severity === 'ERROR' ? 'bg-red-900/10 border-red-500/20' : 'bg-amber-900/10 border-amber-500/20'}`}>
+               <div key={idx} className={`group p-3 rounded-xl border text-xs transition-all ${issue.severity === 'ERROR' ? 'bg-red-900/10 border-red-500/20 hover:border-red-500/40' : 'bg-amber-900/10 border-amber-500/20 hover:border-amber-500/40'}`}>
                   <div className="flex gap-3">
                     <div className={`mt-0.5 flex-none ${issue.severity === 'ERROR' ? 'text-red-500' : 'text-amber-500'}`}>
-                        {issue.severity === 'ERROR' ? <AlertOctagon size={14} /> : <AlertTriangle size={14} />}
+                        {issue.severity === 'ERROR' ? <AlertOctagon size={16} /> : <AlertTriangle size={16} />}
                     </div>
                     <div className="flex-1">
-                        <div className="font-semibold mb-0.5 flex justify-between items-start">
-                            <span className={`${issue.severity === 'ERROR' ? 'text-red-200' : 'text-amber-200'}`}>{issue.message}</span>
-                            <div className="flex items-center gap-1">
-                                {issue.severity === 'ERROR' && canUseAi && issue.line && (
+                        <div className="font-bold mb-1 flex justify-between items-start gap-2">
+                            <span className={`${issue.severity === 'ERROR' ? 'text-red-100' : 'text-amber-100'} leading-snug`}>{issue.message}</span>
+                            <div className="flex items-center gap-1 flex-none">
+                                {issue.severity === 'ERROR' && issue.line && (
                                     <button
                                         onClick={() => handleFixClick(idx, issue)}
-                                        className={`flex items-center gap-1 text-[10px] px-2 py-0.5 rounded border transition-all ${
+                                        className={`flex items-center gap-1 text-[10px] px-2 py-1 rounded border transition-all ${
                                             fixingIssueIndex === idx 
-                                            ? 'bg-blue-600 text-white border-blue-500 shadow-md' 
-                                            : 'bg-slate-800 text-blue-400 border-blue-500/30 hover:border-blue-400'
+                                            ? 'bg-blue-600 text-white border-blue-500 shadow-lg' 
+                                            : 'bg-slate-800 text-blue-400 border-blue-500/20 hover:border-blue-500/50'
                                         }`}
                                     >
-                                        <Sparkles size={10} /> Fix
+                                        <Sparkles size={10} /> {fixingIssueIndex === idx ? 'Close' : 'AI Fix'}
                                     </button>
                                 )}
                                 {issue.line && (
                                     <button 
                                         onClick={() => onJumpToLine && onJumpToLine(issue.line!)}
-                                        className="flex items-center gap-1 text-[10px] opacity-60 font-mono bg-white/10 px-1.5 py-0.5 rounded hover:bg-white/20 hover:opacity-100 transition-all cursor-pointer"
-                                        title="Jump to line"
+                                        className="flex items-center gap-1 text-[10px] font-mono bg-white/5 px-2 py-1 rounded border border-white/5 hover:bg-white/10 hover:border-white/10 transition-all"
                                     >
                                         Ln {issue.line} <ArrowUpRight size={10} />
                                     </button>
                                 )}
                             </div>
                         </div>
-                        <div className="flex items-center gap-2 mt-1 opacity-60">
-                            <span className="bg-black/20 px-1.5 py-0.5 rounded text-[10px] text-slate-300">{issue.source}</span>
-                            {issue.code && <span className="text-slate-400">Code: {issue.code}</span>}
+                        <div className="flex items-center gap-3 mt-2 opacity-50 font-medium">
+                            <span className="bg-black/30 px-2 py-0.5 rounded text-[10px] text-slate-300 uppercase tracking-tighter">{issue.source}</span>
+                            {issue.code && <span className="text-slate-400">ID: {issue.code}</span>}
+                            {issue.segmentId && <span className="text-slate-400">Seg: {issue.segmentId}</span>}
                         </div>
                     </div>
                   </div>
 
-                  {/* Fix Panel Expansion */}
                   {fixingIssueIndex === idx && (
-                      <div className="mt-3 pt-3 border-t border-white/5 animate-in slide-in-from-top-1">
+                      <div className="mt-4 pt-4 border-t border-white/5 animate-in slide-in-from-top-2">
                           {isGeneratingFix ? (
-                              <div className="flex items-center justify-center py-4 text-blue-400 gap-2">
-                                  <Loader2 size={14} className="animate-spin" />
-                                  <span>Analyzing segment rules...</span>
+                              <div className="flex flex-col items-center justify-center py-6 text-blue-400 gap-3">
+                                  <Loader2 size={24} className="animate-spin" />
+                                  <span className="text-[11px] font-bold uppercase tracking-widest animate-pulse">EDI Copilot Analysing...</span>
                               </div>
                           ) : fixResult ? (
-                              <div className="space-y-3">
-                                  <div className="text-slate-300 font-medium">Proposed Fix:</div>
-                                  <div className="bg-black/40 p-2 rounded font-mono text-[11px] text-emerald-300 border border-emerald-500/30 flex items-center justify-between">
-                                      <span>{fixResult.segment}</span>
-                                      <button 
-                                        onClick={() => handleApply(issue.line!, fixResult.segment)}
-                                        className="ml-4 px-3 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-[10px] font-bold transition-colors shadow-sm"
-                                      >
-                                        Apply
-                                      </button>
+                              <div className="space-y-4">
+                                  <div>
+                                      <div className="text-[10px] text-slate-500 font-bold uppercase mb-2">Recommended Segment Update:</div>
+                                      <div className="bg-black/60 p-3 rounded-xl font-mono text-[11px] text-emerald-400 border border-emerald-500/20 flex items-center justify-between shadow-inner">
+                                          <span className="break-all">{fixResult.segment}</span>
+                                          <button 
+                                            onClick={() => handleApply(issue.line!, fixResult.segment)}
+                                            className="ml-4 px-4 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-[10px] font-bold transition-all shadow-lg shadow-emerald-900/40 active:scale-95 flex-none"
+                                          >
+                                            Apply
+                                          </button>
+                                      </div>
                                   </div>
-                                  <div className="flex items-start gap-2 bg-blue-500/10 p-2 rounded text-blue-200">
-                                      <div className="mt-0.5"><Sparkles size={12} /></div>
+                                  <div className="flex items-start gap-3 bg-blue-500/10 p-3 rounded-xl text-[11px] text-blue-200 border border-blue-500/10 leading-relaxed shadow-sm">
+                                      <Sparkles size={14} className="text-blue-400 flex-none mt-0.5" />
                                       <p>{fixResult.explanation}</p>
                                   </div>
                               </div>
                           ) : (
-                              <div className="text-center py-2 text-slate-500 italic">Could not generate a fix.</div>
+                              <div className="text-center py-4 text-slate-500 italic text-[11px]">Assistant could not resolve this specific structural gap.</div>
                           )}
                       </div>
                   )}

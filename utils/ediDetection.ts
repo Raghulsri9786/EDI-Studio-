@@ -29,6 +29,11 @@ export const detectEdiStandard = (content: string): EdiStandard => {
   const trimmed = content.trimStart();
   if (trimmed.startsWith('ISA')) return 'X12';
   if (trimmed.startsWith('GS') || trimmed.startsWith('ST')) return 'X12'; // Partial X12
+  
+  // Heuristic for X12 snippet (e.g. G23*05...)
+  // Checks for 2-3 alphanumeric characters followed by an asterisk at start of line
+  if (/^[A-Z0-9]{2,3}\*/.test(trimmed)) return 'X12';
+
   if (trimmed.startsWith('UNA') || trimmed.startsWith('UNB')) return 'EDIFACT';
   if (trimmed.startsWith('UNH')) return 'EDIFACT'; // Partial EDIFACT
   return 'UNKNOWN';
@@ -59,7 +64,7 @@ export const detectDelimiters = (content: string): EdiDelimiters => {
         };
     }
     
-    // Partial X12 Fallback (GS/ST starts or short ISA)
+    // Partial X12 Fallback (GS/ST starts or short ISA or snippets)
     // Heuristic: Check for common X12 delimiters
     // Most common: * for element, ~ for segment
     const hasStar = trimmed.includes('*');
